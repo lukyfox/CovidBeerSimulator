@@ -42,7 +42,7 @@ class BeerAgent(Agent):
         self.age = agent.age # vek agenta
         self.sex = agent.sex # pohlavi agenta
         self.sicktype = agent.sicktype # typ onemocneni po projeveni priznaku (asymptomatic, mild, severe)
-        self.house_id = agent.house_id # koordinaty (pos) domovske bunky
+        self.house_id = agent.house_id # koordinaty (pos) domovske bunky (nevyuzito)
         self.work_id = agent.work_id # koordinaty (pos) bunky zamestnani / skoly
         self.age_categ = agent.age_categ # vekova kategorie (pro snizeni vypocetniho casu)
         self.immunity_duration = agent.immunity_duration * 24 # pocet stepu, v nichz je agent imunni (alias imd)
@@ -83,6 +83,8 @@ class BeerAgent(Agent):
         self.positive_test_at_step = 0
         self.smart_app_active = False # True znamena, ze dany uzivatel ma zapnutou aplikaci eRouska
         self.has_mask_till = 0 # nenulova hodnota znamena, ze dany agent nosi rousku (po vytrasovani) do daneho stepu
+
+        # TODO: smazat nepouzite atributy...nebo je pouzij :)
 
     def step(self):
         """
