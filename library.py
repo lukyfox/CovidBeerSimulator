@@ -42,8 +42,8 @@ class BeerAgent(Agent):
         self.age = agent.age # vek agenta
         self.sex = agent.sex # pohlavi agenta
         self.sicktype = agent.sicktype # typ onemocneni po projeveni priznaku (asymptomatic, mild, severe)
-        self.house_id = agent.house_id # koordinaty (pos) domovske bunky (nevyuzito)
-        self.work_id = agent.work_id # koordinaty (pos) bunky zamestnani / skoly
+        self.house_id = agent.house_id # koordinaty (pos) domovske bunky (TODO: nahrazeni xcoords a ycoords)
+        self.work_id = agent.work_id # koordinaty (pos) bunky zamestnani / skoly (TODO: nahrazeni xcoords a ycoords)
         self.age_categ = agent.age_categ # vekova kategorie (pro snizeni vypocetniho casu)
         self.immunity_duration = agent.immunity_duration * 24 # pocet stepu, v nichz je agent imunni (alias imd)
         self.inkubation_period = agent.inkubation_period * 24 # pocet stepu od nakazy po projeveni priznaku (alias ip)
@@ -83,8 +83,6 @@ class BeerAgent(Agent):
         self.positive_test_at_step = 0
         self.smart_app_active = False # True znamena, ze dany uzivatel ma zapnutou aplikaci eRouska
         self.has_mask_till = 0 # nenulova hodnota znamena, ze dany agent nosi rousku (po vytrasovani) do daneho stepu
-
-        # TODO: smazat nepouzite atributy...nebo je pouzij :)
 
     def step(self):
         """
@@ -153,7 +151,7 @@ class BeerAgent(Agent):
         """
         if self.age >= self.model.beer_age_limit and self.beers_per_hour and not self.is_evidently_ill(typ='symptomatic', sick_period='regular'):
             # nemocny agent po projeveni priznaku pivo nepije (da si radsi caj nebo fizak), asymptomatik to neresi...
-            # a deti (self.beers_per_hour je empty dictionary) pivo nepiji vubec
+            # a deti a nepijaci (self.beers_per_hour je empty dictionary) pivo nepiji vubec
             if where == 'R':
                 # agent pivar/ka vypije každou hodinu určité množství piv - pocitano v pulitrech, resp. lahvich,
                 # prepocet hodinoveho splavku je relizovan na pocatku simulace podle planovaneho pohyboveho rezezce
@@ -211,12 +209,13 @@ class BeerAgent(Agent):
         negativni vysledky maji urcitou pravdepodobnost vyskytu) a jen v obdobi, kdy vylucuje virus
         :return:
         '''
+        test_type_index = 1 if 'pcr' in self.model.precaution_test['name'] else 0
         if (self.is_evidently_ill() or self.is_evidently_ill(sick_period='superspreader')) and \
-                self.model.precaution_test['accuracy'] >= random.random():
-            self.positive_test_at_step = self.model.schedule.steps + self.model.precaution_test['wait_till_result']
+                self.model.precaution_test['accuracy'][test_type_index] >= random.random():
+            self.positive_test_at_step = self.model.schedule.steps + self.model.precaution_test['wait_till_result'][test_type_index]
             self.model.tested_agents['positive'] += 1
             if not self.model.df_agent_snapshot.empty:
-                self.model.df_agent_snapshot.at[self.unique_id, 'positive_test_at_step'] = self.model.schedule.steps + self.model.precaution_test['wait_till_result']
+                self.model.df_agent_snapshot.at[self.unique_id, 'positive_test_at_step'] = self.model.schedule.steps + self.model.precaution_test['wait_till_result'][test_type_index]
         else:
             self.model.tested_agents['negative'] += 1
         self.tested_at_step = self.model.schedule.steps
@@ -392,6 +391,7 @@ class BeerAgent(Agent):
                 self.model.df_agent_snapshot.at[self.unique_id, 'pos'] = tuple(map(lambda q: int(q), destination)) #f'{int(destination[0])},{int(destination[1])}' #tuple(int(destination[0]), int(destination[1]))
         if place_to_move == 'D' and unscheduled_home:
             # pokud je agent doma neplanovane (karantena, lockdown,...), lahvace nepije
+            # TODO: aplikovat nahradni pijaky podle klice pivo z Generatoru
             x = 1
         else:
             self.beer_yourself(where=place_to_move)
@@ -411,26 +411,21 @@ class BeerModel(Model):
         self.random.seed(random_seed)
         self.running = True
 
-        self.data_path = os.path.join(os.getcwd(), 'data') if not data_path else data_path
-        self.max_steps = max_steps
+        self.data_path = os.path.join(os.getcwd(), 'data') if not data_path else data_path # cesta ke slozce zdroju a vystupu
+        self.max_steps = max_steps # uvazovany pocet stepu
         self.beer_age_limit = 18 # vek, od ktereho agent muze konzumovat pivo
         # nactu agenty generovane v csv a jejich route plan; protoze dataframe pouzivam pri reinfekcich, je pod self
-        self.df_agents = pd.read_csv(os.path.join(self.data_path, 'source/df_agents.csv'), sep=';', index_col=[0])
-        self.agent_age_categs = list(self.df_agents['age_categ'].unique())
-        df_agent_moves = pd.read_csv(os.path.join(self.data_path, 'source/df_agent_moves.csv'), sep=';', index_col=['agent_id'])
+        self.df_agents = pd.read_csv(os.path.join(self.data_path, 'source/df_agents.csv'), sep=';', index_col=[0]) # dataframe agentu ze souboru Generatoru
+        self.agent_age_categs = list(self.df_agents['age_categ'].unique()) # list vekovych kategorii vyuzitych v modelu
+        df_agent_moves = pd.read_csv(os.path.join(self.data_path, 'source/df_agent_moves.csv'), sep=';', index_col=['agent_id']) # dataframe retezcu mobility jednotlivych agentu
 
-        # store requested number of agents
-        #self.number_of_agents = self.df_agents.shape[0] #number_of_agents
-
-        # define world size
-        self.grid_map = pd.read_csv(os.path.join(self.data_path, 'source/df_grid.csv'), sep=';', index_col=[0])
-        #self.grid_map = self.grid_map.applymap(lambda x: ast.literal_eval(x))
-        self.width = self.grid_map.shape[1]
-        self.height = self.grid_map.shape[0]
+        # definice simulacniho sveta
+        self.grid_map = pd.read_csv(os.path.join(self.data_path, 'source/df_grid.csv'), sep=';', index_col=[0]) # nacteni mapy sveta s definici lokaci
+        self.width = self.grid_map.shape[1] # sirka sveta
+        self.height = self.grid_map.shape[0] # vyska sveta
 
         # define multigrid toroidal environment
         self.grid = MultiGrid(self.width, self.height, True)
-        # collect place types
         # prevedeni 2D vektoru na 1D (itertools je rychlejsi nez vnorene cykly)
         place_list = list(itertools.chain(*self.grid_map.values.tolist()))
         # stringove reprezentace prevedu na slovniky
@@ -475,20 +470,17 @@ class BeerModel(Model):
         # mnozstvi vypiteho piva
         self.beer = {
             'cepovane': 0,
-            'lahvove': 0,
-            'nevypite_cepovane': 0,
-            'nevypite_lahvove': 0,
+            'lahvove': 0
         }
 
         self.simtype = simtype #'covid', 'no_covid'
-        self.precautions = precautions
+        self.precautions = precautions # seznam opatreni, ktera maji byt v modelu aplikovana
         if self.precautions:
             self.precautions = [self.precautions.lower()] if ',' not in self.precautions \
                 else [p.strip().lower() for p in self.precautions.split(',')]
         self.base_P = 0.02
-        #self.precautions_treshold = 25 # pocet zachycenych symptomatickych agentu pro zapnuti/vypnuti opatreni
         self.tested_agents = {'positive': 0, 'negative': 0}
-        self.quarantinized_agents = 0
+        #self.quarantinized_agents = 0
 
         self.df_results = pd.DataFrame()
         self.df_infected_agents = pd.DataFrame()
@@ -506,7 +498,8 @@ class BeerModel(Model):
             #self.grid.place_agent(agent, (int(agent.coord_house_xgrid), int(agent.coord_house_ygrid)))
             self.schedule.add(agent)
         if simtype == 'covid':
-            # v simulaci s infekci vyberu na pocatku jednoho agenta pro infikaci (pri seed=42 jde o muze, 21 let, asymptomaticky prubeh)
+            # TODO: vybrat asymptomatickeho prenasece
+            # v simulaci s infekci vyberu na pocatku jednoho agenta pro infikaci
             patient_0 = self.random.choice(self.schedule.agents)
             patient_0.calc_infect_periods(1)
             patient_0.infected_by = [-1]
@@ -517,7 +510,7 @@ class BeerModel(Model):
             # aplikace ochrany dychacich cest
             'name': 'mask',
             # vekove rozmezi, pro ktere je opatreni aplikovatelne
-            'applicable_age_categ': '0-101',
+            'applicable_age_categ': '5-101',
             # hranice pro aktivaci opatreni - trigger_threshold je bud pocet symptomatickych nemocnych,
             # nebo pocet pozitivne testovanych (vzdy klouzave kumulativne za 7 dnu zpetne), dosazeni hranice
             # trigger_threshold pri aktivovanem opatreni dane opatreni opet deaktivuje
@@ -568,12 +561,11 @@ class BeerModel(Model):
             'stop_precaution_at': 0,
             'chapters': 0,
             # smart action definuje, co se stane po odhaleni pozitivniho/nemocneho kontaktu
-            'smart_action': ['M'], # Q=karantena, T=test, M=rouska (individualni)
+            'smart_action': ['M'], # Q=karantena, QD=karantena na celou domacnost, T=test, M=rouska, MD=rouska pro celou domacnost
             # kolik rizikovych kontaktu nasleduje smart_action (eRouska je anonymni a kontakty nelze identifikovat - dodrzovani je dobrovolne)
             'smart_action_prob': 1,
-            'smart_action_duration': 240, # trvani individualniho opatreni po vytrasovani
+            'smart_action_duration': 240, # trvani individualniho opatreni po vytrasovani (aplikovano jen u Q, QD, M a MD)
             'delete_db_after': 120,
-            #'smart_agents': [], #list(self.df_agent_snapshot.loc[(self.df_agent_snapshot['smart_app_active']), 'unique_id'])
             'is_active': False
         }
         self.precaution_quarantine = {
@@ -584,20 +576,19 @@ class BeerModel(Model):
             'min_duration_in_steps': 240,
             'stop_precaution_at': 0,
             'chapters': 0,
-            'quarantine_type': ['D'], # D = karantena pro spolecnou domacnost, S = skola, W = prac. kol., A = eRouska
+            'quarantine_type': ['D'], # D = karantena pro spolecnou domacnost, W = pracovni a skolni kol.
             'is_active': False
         }
 
         self.precaution_test = {
-            # TODO tip: implemetace PCR a parametru testu (wait_till_result>0, accuracy=0.99)
             'name': 'test',
-            'test_type': 'antigen', # 'pcr'
+            'test_type': ['antigen', 'pcr'],
             # zpozdeni mezi provedenim testu a vysledkem (pri nenulove hodnote se posune detekce do budoucnosti)
-            'wait_till_result': 0,# 12 pro pcr
+            'wait_till_result': [0, 12], # 0 pro antigen, 12 pro pcr
             # jak casto lze za normalnich okolnosti absolvovat test (testovani u eRousky muze mit kratsi interval)
-            'frequency_once_per_days': 3,
+            'frequency_once_per_days': [3, 7], # jednou za 3 dny antigen, jednou za 5 dni PCR
             # senzitivita testu - kolik nakazenych dokaze identifikovat (1-accuracy = pomer falesne negativnich testu)
-            'accuracy': 0.7, # 0.99 pro PCR
+            'accuracy': [0.7, 0.99], # 70% presnost u antigenu, 99% presnost u PCR
             'applicable_age_categ': '12-100',
             # nulovy threshold znamena aktivaci opatreni hned v uvodu simulace
             'trigger_threshold': 0,
@@ -652,6 +643,9 @@ class BeerModel(Model):
                     # samostesty/odberova mista pro agenty "mimo system" skoly a prace
                     self.precaution_test['test_places'].append('D')
                     self.precaution_test['name'] += '-home'
+                if 'p' in options:
+                    # je aplikovan PCR test misto antigenniho
+                    self.precaution_test['name'] += '-pcr'
                 # odstraneni pripadnych duplicit (fungovalo by to i tak, ale...)
                 self.precaution_test['test_places'] = list(set(self.precaution_test['test_places']))
             # seznam testovacich mist musi mit alespon jednu hodnotu, jinak jde o chybu (napr. nespravne parametry v batch runneru)
@@ -712,27 +706,34 @@ class BeerModel(Model):
                     # idealni stav - 100% pokryti populace aplikaci/tokenem
                     self.precaution_smart_app['penetration']['podil_aplikaci'] = 1.0
                     self.precaution_smart_app['name'] += '-idealistic'
-                if 'q' in options:
-                    # smart kontakty pozitivniho/nemocneho agenta podstoupi karantenu
+                if 'qd' in options:
+                    # cela domacnost smart kontaktu pozitivniho/nemocneho agenta podstoupi karantenu
+                    self.precaution_smart_app['smart_action'].append('QD')
+                    self.precaution_smart_app['name'] += '-quarantine2household'
+                elif 'q' in options:
+                    # smart kontakty pozitivniho/nemocneho agenta podstoupi karantenu (Q xor QD)
                     self.precaution_smart_app['smart_action'].append('Q')
                     self.precaution_smart_app['name'] += '-quarantine'
                 if 't' in options:
                     # smart kontakty pozitivniho/nemocneho agenta podstoupi test
                     self.precaution_smart_app['smart_action'].append('T')
                     self.precaution_smart_app['name'] += '-test'
-                if 'm' in options:
+                if 'md' in options:
+                    # cela domacnost smart kontaktu pozitivniho/nemocneho agenta nasadi rousky
+                    self.precaution_smart_app['smart_action'].append('MD')
+                    self.precaution_smart_app['name'] += '-mask2household'
+                elif 'm' in options:
                     # smart kontakty pozitivniho/nemocneho agenta nasadi rousky
                     self.precaution_smart_app['smart_action'].append('M')
                     self.precaution_smart_app['name'] += '-mask'
             self.applied_precautions.append(self.precaution_smart_app)
         # TODO tip: prehodit precautions do samostatne tridy, vyuzit dedicnost (lepsi rozsiritelnost)
-        # TODO tip: plna konfigurovatelnost pres parametry BatchRunneru, cmd args.
         # TODO tip: upravit simulaci i pro scenare, kde se vyskytuje sector a lockdown s jinymi tt, napr.
         #  'app_tm!0,sector_r!10,lockdown!50', kde se aktualne spousti jen lockdown!50
 
         # running je featute pro BatchRunner, umoznuje ukoncit beh po dosazeni podminky (zde zatim nepouzito)
-        self.running = True
-        self.step_counter = 0
+        #self.running = True
+        #self.step_counter = 0
 
         self.a_not_infected = 0
         self.a_newly_infected = 0
@@ -757,6 +758,24 @@ class BeerModel(Model):
         for agent in self.agents:
             # uvodni nastaveni pivniho splavku (pro dobu, kdy je svet v poradku)
             agent.calc_beer_consumption()
+
+    def distribute_smart_app(self):
+        '''
+        Pokud je eRouska soucasti simulace, pak provedu instalaci aplikaci do telefonu
+        a/nebo rozdam Singapurske tokeny tem co telefon nemaji, vse podle rozdeleni technologii/ochoty v populaci
+        :return:
+        '''
+        df_app_penetration = self.precaution_smart_app['penetration']
+        for r in df_app_penetration.loc[(df_app_penetration['podil_aplikaci'] > 0)].itertuples():
+            # zpracovavam jen vekove kategorie, ktere maji nenulovy podil appek
+            mask_categ = (self.df_agent_snapshot['age'].between(int(r.kategorie.split('-')[0]), int(r.kategorie.split('-')[1])))
+            # vyberu nahodny vzorek indexu z vekove kategorie pro zmenu smart_app_active na True
+            smart_agents = self.df_agent_snapshot.loc[mask_categ].sample(frac=r.podil_aplikaci, random_state=seed).index
+            # a instaluji aplikace/vesim na krk tokeny
+            self.df_agent_snapshot.loc[smart_agents, 'smart_app_active'] = True
+            for idx in smart_agents.to_list():
+                # zmenu stavu provedu i v instancich agentu
+                self.agents[idx]['smart_app_active'] = True
 
     def calc_thresholds(self):
         '''
@@ -818,7 +837,7 @@ class BeerModel(Model):
         """
         Pokud je identifikovan symptomaticky/pozitivne testovany agent, jsou dle databaze df_smart_contacts vytrasovany
         kontakty z eRousky
-        :param: unique_id = cislo agenta, ktery spustil trasovani
+        :param: mask_app_tracer = nemocni nebo pozitivne testoovani agenti s chytrou aplikaci
         :return:
         """
         processed = []
@@ -832,7 +851,7 @@ class BeerModel(Model):
             contacts = self.df_smart_contacts.loc[mask_matching_entries, 'contacts'].values
             # seznam kontaktu je 2D, pres itertools z nej udelam 1D (flat list bez duplicit), odeberu zpracovane agenty,
             # protoze ti jedou oddelene (jsou v karantene bud kvuli testu, nebo kvuli symp. onemocneni)
-            contacts = list(set(itertools.chain.from_iterable(contacts)) ^ set(processed))
+            contacts = list(set(itertools.chain.from_iterable(contacts)) ^ set(processed)) # TODO: zamysli se - neni efektivnejsi misto set(porcessed pouzit self.df_agent_snapshot[mask_app_tracer].to_list()?)
             for unique_id in contacts:
                 if self.precaution_smart_app['smart_action_prob'] == 1 or self.precaution_smart_app['smart_action_prob'] > random.random():
                     # pokud je pravdepodobnost nasledovani smart_action rovna 1, setrim random generator
@@ -842,12 +861,31 @@ class BeerModel(Model):
                         # agent se zkarantenizuje jen v pripade, kdy v karantene jeste neni, nebo je karantena kratsi
                         # nez nastaveni smart_action_duration
                         self.agents[unique_id].quarantinize_yourself()
+                    if 'QD' in self.precaution_smart_app['smart_action']:
+                        # pokud je smart_action karantena na celou domacnost kontaktu, aplikuji na vsechny agenty,
+                        # kteri dosud nejsou v (dostatecne dlouhe) karantene
+                        xcoord = self.df_agent_snapshot.loc[unique_id, 'coord_house_xgrid']
+                        ycoord = self.df_agent_snapshot.loc[unique_id, 'coord_house_ygrid']
+                        mask_household = (self.df_agent_snapshot['coord_house_xgrid']==xcoord) \
+                                         & (self.df_agent_snapshot['coord_house_ygrid']==ycoord) \
+                                         & (self.df_agent_snapshot['quarantine_till'] < self.schedule.steps + self.precaution_smart_app['smart_action_duration'])
+                        for affected_id in self.df_agent_snapshot.loc[mask_household].to_list():
+                            self.agents[affected_id].quarantinize_yourself()
                     if 'T' in self.precaution_smart_app['smart_action']:
                         # pokud je smart_action testovani, agent se otestuje
                         self.agents[unique_id].test_yourself()
                     if 'M' in self.precaution_smart_app['smart_action']:
                         # pokud je smart_action ochrana dychacich cest, agent zacne nosit rousku
                         self.agents[unique_id].mask_yourself()
+                    if 'MD' in self.precaution_smart_app['smart_action']:
+                        # pokud je smart_action ochrana dychacich cest pro celou domacnost, zacnou nosit rousku vsichni
+                        # agenti v domacnosti v odpovidajicim veku
+                        xcoord = self.df_agent_snapshot.loc[unique_id, 'coord_house_xgrid']
+                        ycoord = self.df_agent_snapshot.loc[unique_id, 'coord_house_ygrid']
+                        mask_household = (self.df_agent_snapshot['coord_house_xgrid']==xcoord) \
+                                         & (self.df_agent_snapshot['coord_house_ygrid']==ycoord)
+                        for affected_id in self.df_agent_snapshot.loc[mask_household].to_list():
+                            self.agents[affected_id].mask_yourself()
 
 
     def save_infected_agent(self, agent, vector_id, ir=0, place=None, threshold=0):
@@ -899,10 +937,11 @@ class BeerModel(Model):
         if self.precaution_test['is_active']:
             # pokud je aktivni opatreni testovani, vyfiltruji agenty, kteri maji byt otestovani - nachazi se
             # na testovacim miste a dosahli frekvence testovani
+            test_type_index = 1 if 'pcr' in self.precaution_test['name'] else 0
             age_categ = (int(self.precaution_test['applicable_age_categ'].split('-')[0]), int(self.precaution_test['applicable_age_categ'].split('-')[1]))
             mask_to_be_tested_agents = (self.df_agent_snapshot['age'].between(age_categ[0], age_categ[1])) & \
                                        (self.df_agent_snapshot['positive_test_at_step'] == 0) & \
-                                       ((self.df_agent_snapshot['tested_at_step']+self.precaution_test['frequency_once_per_days']*24 < step) | (self.df_agent_snapshot['tested_at_step'] == 0)) & \
+                                       ((self.df_agent_snapshot['tested_at_step']+self.precaution_test['frequency_once_per_days'][test_type_index]*24 < step) | (self.df_agent_snapshot['tested_at_step'] == 0)) & \
                                        (self.df_agent_snapshot['current_place'].isin(self.precaution_test['test_places']))
             for agent in self.df_agent_snapshot[mask_to_be_tested_agents].itertuples():
                 self.agents[int(agent.unique_id)].test_yourself()
@@ -955,7 +994,7 @@ class BeerModel(Model):
             self.grid.remove_agent(self.agents[int(agent.unique_id)])
             self.schedule.remove(self.agents[int(agent.unique_id)])
             if not self.df_agent_snapshot.empty:
-                # odstranim agenta i z reportovaciho dataframe
+                # odstranim agenta i z reportovaciho dataframe (ale v puvodním df_agents zustava pro vyber "retezce osudu" pri reinfekci jinych agentu)
                 self.df_agent_snapshot.drop(index=agent.unique_id, inplace=True)
 
         # vyfiltruji aktualne nemocne a nakazene agenty (ty, kteri mohou prenaset nakazu)
@@ -1041,7 +1080,8 @@ class BeerModel(Model):
         """
         # zacatek vypoctu casu behu jednoho kroku (pro int. porovnani vlivu opatreni, ruznych pristupu apod.)
         start = time.time()
-        # vynuluji pocty testu (dulezite) a infekci pro novy step (ty jsou jen ukazateli zda simulace funguje spravne)
+        # vynuluji pocty testu (dulezite) a infekci pro novy step (ty jsou hlavne ukazateli zda simulace funguje
+        # spravne a pro dalsi analyzu chovani)
         self.tested_agents = {'positive': 0, 'negative': 0}
         self.a_not_infected = 0
         self.a_newly_infected = 0
@@ -1050,22 +1090,15 @@ class BeerModel(Model):
             # uvodni nastaveni simulace v nultem kroku (slozita soukoli sveta se rozebehnou az od stepu 1)
             # vytvoreni snapshotu s agenty
             self.agents_to_dataframe()
+
             if self.precaution_smart_app in self.applied_precautions:
-                # pokud je eRouska soucasti simulace, pak v nultem kroku provedu instalaci aplikaci do telefonu
-                # a/nebo rozdam Singapurske tokeny tem, co telefon nemaji
-                df_app_penetration = self.precaution_smart_app['penetration']
-                for r in df_app_penetration.loc[(df_app_penetration['podil_aplikaci'] > 0)].itertuples():
-                    # zpracovavam jen vekove kategorie, ktere maji nenulovy podil appek
-                    mask_categ = (self.df_agent_snapshot['age'].between(int(r.kategorie.split('-')[0]), int(r.kategorie.split('-')[1])))
-                    # vyberu nahodny vzorek indexu z vekove kategorie pro zmenu smart_app_active na True
-                    smart_agents = self.df_agent_snapshot.loc[mask_categ].sample(frac=r.podil_aplikaci, random_state=seed).index
-                    # a instaluji aplikace/vesim na krk tokeny
-                    self.df_agent_snapshot.loc[smart_agents, 'smart_app_active'] = True
+                self.distribute_smart_app()
+
             # step zvysim o 1, protoze 0 je vychozi a komparacni stav u mnoha vlastnosti modelu (alt. jsem si
             # jako default values mohl vybrat np.nan, -1,...), ale start od 1 nema na vysledky simulace
             # stejne stat. vyznamny vliv, tudiz to nevadi
             self.schedule.steps += 1
-            # vypis aplikovanych opatreni a poctu kroku
+            # vypis aplikovanych opatreni a poctu kroku uzivateli
             print(f'\n{self.simtype} scenario started -> applied precautions:',
                   ', '.join([f"{p['name']} (tt:{p['trigger_threshold']} {'->immediately triggered' if p['trigger_threshold']==0 else 'of positive tests' if self.precaution_test in self.applied_precautions else 'of mild/severe symptoms'})" for p in self.applied_precautions]))
         else:
