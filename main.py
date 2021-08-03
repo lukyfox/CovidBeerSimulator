@@ -58,52 +58,51 @@ if __name__ == '__main__':
     parser.add_argument("--simtype", help="typ simulace - covid, no covid - pokud neni uvedeno, modeluje se simtype = covid; pokud je uveden --configle, je argument simtype ignorovan")
     parser.add_argument("--precautions", help="sekvence opatreni - jednotliva opatreni v sekvenci jsou oddelena carkou, jendotlive sekvence strednikem; pokud je uveden --configle, je argument precautions ignorovan")
     args = parser.parse_args()
-    params = []
-    param_template = {'variable_params': {}, 'fixed_params': {}}
+    params_library = []
+    param_story = {'variable_params': {}, 'fixed_params': {}}
     if args.steps:
-        param_template['fixed_params']['max_steps'] = int(args.steps)
+        param_story['fixed_params']['max_steps'] = int(args.steps)
     else:
-        param_template['fixed_params']['max_steps'] = 720
+        param_story['fixed_params']['max_steps'] = 720
     if args.configle:
         print(f"config file {args.configle}")
         df_ini = pd.read_csv(args.configle, sep=';')
         mask_base = (df_ini.columns[0]=='no covid') | ((df_ini.columns[0]=='covid') & (df_ini.columns[1].isna))
         simtype = df_ini.iloc[mask_base, 0].unique().to_list()
         if simtype:
-            param_template['variable_params']['simtype'] = simtype
-            params.append(param_template)
+            param_story['variable_params']['simtype'] = simtype
+            params_library.append(param_story)
         precautions = df_ini.iloc[~mask_base, 0].unique().to_list()
         if precautions:
-            param_template['variable_params']['precautions'] = precautions
-            param_template['fixed_params']['simtype'] = 'covid'
-            params.append(param_template)
-        print('params: ', params)
+            param_story['variable_params']['precautions'] = precautions
+            param_story['fixed_params']['simtype'] = 'covid'
+            params_library.append(param_story)
+        print('params: ', params_library)
     else:
         if args.precautions:
-            param_template['variable_params']['precautions'] = args.precautions.split(';')
-            param_template['fixed_params']['simtype'] = 'covid'
-            params.append(param_template)
+            param_story['variable_params']['precautions'] = args.precautions.split(';')
+            param_story['fixed_params']['simtype'] = 'covid'
+            params_library.append(param_story)
         elif args.simtype:
-            param_template['variable_params']['simtype'] = args.simtype.split(';')
-            params.append(param_template)
-    if not params:
-        param_template['variable_params']['simtype'] = ['covid', 'no covid']
-        params.append(param_template)
+            param_story['variable_params']['simtype'] = args.simtype.split(';')
+            params_library.append(param_story)
+    if not params_library:
+        param_story['variable_params']['simtype'] = ['covid', 'no covid']
+        params_library.append(param_story)
 
-    print(params)
-    raise Exception
+    print(params_library)
 
-    max_steps = params[0]['fixed_params']['max_steps']
+    max_steps = params_library[0]['fixed_params']['max_steps']
     print('\nSteps to be simulated =', max_steps, f'({max_steps/24} days) for each simulation scenario',
           '(multiprocessing mode)')
 
-    for storybook in params:
+    for storybook in params_library:
         batch_run = BatchRunnerMP(BeerModel, nr_processes=os.cpu_count()-1,
                                   variable_parameters=storybook['variable_params'],
                                   fixed_parameters=storybook['fixed_params'],
                                   iterations=1,
                                   max_steps=max_steps,
-                                  model_reporters={"beercon": get_beer_results, "epi": get_epidemic_results}
+                                  model_reporters={"beer": get_beer_results, "epi": get_epidemic_results}
                                   )
         batch_run.run_all()
         run_data = batch_run.get_model_vars_dataframe()

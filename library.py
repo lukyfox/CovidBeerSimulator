@@ -4,10 +4,10 @@ import os
 from mesa import Agent, Model
 from mesa.time import RandomActivation
 from mesa.space import MultiGrid
-from mesa.datacollection import DataCollector
+# from mesa.datacollection import DataCollector
 import pandas as pd
 import numpy as np
-import itertools, time, random
+import itertools, time, random, json
 import plotly.graph_objects as go
 import plotly.express as px
 import plotly.subplots as ps
@@ -515,18 +515,21 @@ class BeerModel(Model):
             self.save_infected_agent(patient_0, np.nan, place='Ext')
 
         # vycet opatreni - kazde opareni je dictionary
+        with open(os.path.join(data_path, 'source\config_sim.json')) as file:
+            data = json.loads(file.read())
+
         self.precaution_mask = {
             # aplikace ochrany dychacich cest
-            'name': 'mask',
+            'name': data['mask']['nazev'],
             # vekove rozmezi, pro ktere je opatreni aplikovatelne
-            'applicable_age_categ': '5-101',
+            'applicable_age_categ': data['mask']['aplikovatelne_pro_vek'],
             # hranice pro aktivaci opatreni - trigger_threshold je bud pocet symptomatickych nemocnych,
             # nebo pocet pozitivne testovanych (vzdy klouzave kumulativne za 7 dnu zpetne), dosazeni hranice
             # trigger_threshold pri aktivovanem opatreni dane opatreni opet deaktivuje
-            # (TODO tip: trigger_threshold_start, trigger_threshold_end pro ruzne podminky aktivace a deaktivace)
-            'trigger_threshold': 1,
+            # (TODO tip: trigger_threshold_start, trigger_threshold_end pro ruzne podminky aktivace a deaktivace u vsech precs)
+            'trigger_threshold': data['smart_app']['minimalni_trvani_dnu'] if data['smart_app']['minimalni_trvani_dnu'] != 'max' else self.max_steps+1,
             # minimalni trvani aktivovaneho opatreni i kdyby podminky odpovidaly stavu pro deaktivaci
-            'min_duration_in_steps': 240,
+            'min_duration_in_steps': data['mask']['minimalni_trvani_dnu'] * 24,
             # cislo stepu pro ukonceni opatreni (+1), dopocitana hodnota pri aktivaci
             'stop_precaution_at': 0,
             # pocet aktivaci opatreni v prubehu simulace
@@ -539,77 +542,112 @@ class BeerModel(Model):
             # Parametr ir v Nemocnici (H) je prozatim irelevantni, protoze model nepocita s vlivem onemocneni
             # na zdravotni personal a kapacitu zdravotniho systemu.
             # Idealni pripad pocita s hodnotou 1 u vsech kategorii
-            'protection': {'D': 0.1, 'W': 1, 'S': 1, 'P': 1, 'R': 0.5, 'N': 1, 'H': 1},
+            'protection': data['mask']['ucinnost_dle_lokace'],
             # hodnota ochrany pro vnitrni prostory - ucinnost rousky
-            'base_protective_value': 0.95,
+            'base_protective_value': data['mask']['ochrana'],
             # hodnota True je nastavena, pokud je opatreni aktivni
             'is_active': False
         }
         self.precaution_lockdown = {
             # lockdown nebo sektorove omezeni, lisi se vyctem uzavrenych lokaci
-            'name': 'sector',
-            'applicable_age_categ': 'all',
-            'trigger_threshold': 5,
-            'min_duration_in_steps': 240,
+            'name': data['sector']['nazev'],
+            # TODO tip: uvedenim jineho rozsahu min-max u applicable_age_categ lze simulovat ochranu zranitelnych skupin
+            #  (seniori)...otazkou je, zda to ma vubec cenu, kdyz i jine modely (a nakonec i realita) ukazuji na nefunkcnost omezeni...
+            'applicable_age_categ': data['sector']['aplikovatelne_pro_vek'],
+            'trigger_threshold': data['sector']['mez_aktivace_deaktivace'],
+            'min_duration_in_steps': data['sector']['minimalni_trvani_dnu'] * 24 if data['sector']['minimalni_trvani_dnu'] != 'max' else self.max_steps+1 * 24,
             'stop_precaution_at': 0,
             'chapters': 0,
             # seznam uzavrenych lokaci, R = sector_pub, W = workplace + school, N = nakupni zona, 'P' = zakaz vychazeni,
             # pro uplny lockdown uvedu vsechny lokace ['R', 'W', 'N', 'P']
-            'closed_locations': ['R', 'W', 'N', 'P'],
+            'closed_locations': data['sector']['uzavrene_lokace'],
             'is_active': False
         }
         self.precaution_smart_app = {
             # chytra aplikace - eRouska (evidence kontaktu mezi uzivateli aplikace/tokenu),
             # prideleni aplikaci v 1. kroku modelu, kontakty se ukladaji na konci kroku modelu, 5-ti denni historie
-            'name': 'app',
+            'name': data['smart_app']['nazev'],
             # penetration predstavuje rozdeleni aplikaci ve vekovych skupinach, de facto nahrazuje applicable_age_categ
-            'penetration': pd.read_csv(os.path.join(self.data_path, 'source/precautions/smart_app.csv'), sep=';'),
-            'trigger_threshold': 1,
+            'penetration': data['smart_app']['podil_aplikaci_v_kategorii'],
+            #'penetration': pd.read_csv(os.path.join(self.data_path, 'source/precautions/smart_app.csv'), sep=';'),
+            'trigger_threshold': data['smart_app']['mez_aktivace_deaktivace'],
             # jakmile je opatreni eRousky spusteno, bezi do konce simulace
-            'min_duration_in_steps': self.max_steps+1,
+            'min_duration_in_steps': data['smart_app']['minimalni_trvani_dnu'] * 24 if data['smart_app']['minimalni_trvani_dnu'] != 'max' else self.max_steps+1,
             'stop_precaution_at': 0,
             'chapters': 0,
-            # smart action definuje, co se stane po odhaleni pozitivniho/nemocneho kontaktu
-            'smart_action': ['M'], # Q=karantena, QD=karantena na celou domacnost, T=test, M=rouska, MD=rouska pro celou domacnost
+            # smart action definuje, co se stane po odhaleni pozitivniho/nemocneho kontaktu, muze nabyvat hodnot
+            # Q=karantena, QD=karantena na celou domacnost, T=test, M=rouska, MD=rouska pro celou domacnost
+            'smart_action': data['smart_app']['akce'],
             # kolik rizikovych kontaktu nasleduje smart_action (eRouska je anonymni a kontakty nelze identifikovat - dodrzovani je dobrovolne)
-            'smart_action_prob': 1,
-            'smart_action_duration': 240, # trvani individualniho opatreni po vytrasovani (aplikovano jen u Q, QD, M a MD)
-            'delete_db_after': 120,
+            'smart_action_prob': data['smart_app']['efektivita_aplikace'],
+            # trvani individualniho opatreni po vytrasovani (aplikovano jen u Q, QD, M a MD)
+            'smart_action_duration': data['smart_app']['minimalni_trvani_chytre_akce_dnu'] * 24,
+            'delete_db_after': data['smart_app']['kontakty_uchovavat_dnu'] * 24,
             'is_active': False
         }
         self.precaution_quarantine = {
             # aplikovano na agenta ve chvili testu, symptomatickeho onemocneni nebo sdileni domacnosti
-            'name': 'quarantine',
-            'applicable_age_categ': 'all',
-            'trigger_threshold': 0,
-            'min_duration_in_steps': 240,
+            'name': data['karantena']['nazev'],
+            'applicable_age_categ': data['karantena']['cilova_vekova_skupina'],
+            'trigger_threshold': data['karantena']['mez_aktivace_deaktivace'],
+            'min_duration_in_steps': data['karantena']['minimalni_trvani_dnu'] * 24,
             'stop_precaution_at': 0,
             'chapters': 0,
-            'quarantine_type': ['D'], # D = karantena pro spolecnou domacnost, W = pracovni a skolni kol.
+            # D = karantena pro spolecnou domacnost, W = pracovni a skolni kol.
+            'quarantine_type': data['karantena']['typ_karanteny'],
             'is_active': False
         }
-
         self.precaution_test = {
-            'name': 'test',
-            'test_type': ['antigen', 'pcr'],
+            'name': data['test']['nazev'],
+            'test_type': data['test']['typ_testu'], #['antigen', 'pcr'],
             # zpozdeni mezi provedenim testu a vysledkem (pri nenulove hodnote se posune detekce do budoucnosti)
-            'wait_till_result': [0, 12], # 0 pro antigen, 12 pro pcr
+            'wait_till_result': data['test']['zpozdeni_vysledku_hodin'], # [0, 12], # 0 pro antigen, 12 pro pcr
             # jak casto lze za normalnich okolnosti absolvovat test (testovani u eRousky muze mit kratsi interval)
-            'frequency_once_per_days': [3, 7], # jednou za 3 dny antigen, jednou za 5 dni PCR
+            'frequency_once_per_days': data['test']['frekvence_testu_1_krat_za_dny'], #[3, 7], # jednou za 3 dny antigen, jednou za 5 dni PCR
             # senzitivita testu - kolik nakazenych dokaze identifikovat (1-accuracy = pomer falesne negativnich testu)
-            'accuracy': [0.7, 0.99], # 70% presnost u antigenu, 99% presnost u PCR
-            'applicable_age_categ': '12-100',
+            'accuracy': data['test']['presnost'], # [0.7, 0.99], # 70% presnost u antigenu, 99% presnost u PCR
+            'applicable_age_categ': data['test']['aplikovatelne_pro_vek'],
             # nulovy threshold znamena aktivaci opatreni hned v uvodu simulace
-            'trigger_threshold': 0,
-            'min_duration_in_steps': 240,
+            'trigger_threshold': data['test']['mez_aktivace_deaktivace'],
+            'min_duration_in_steps': data['test']['minimalni_trvani_dnu'] * 24,
             'stop_precaution_at': 0,
             'chapters': 0,
-            # seznam lokaci, na kterych probiha testovani
-            'test_places': ['W'],
+            # seznam lokaci, na kterych probiha testovani - W = skoly a pracoviste, D =  doma (nebo odberova mista)
+            'test_places': data['test']['testovaci_lokace'],
             'is_active': False
         }
         self.applied_precautions = [] # seznam aplikovanych opatreni pro dany beh simulace
+        # citace neuspesnych a uspesnych pokusu o infikaci
+        self.a_not_infected = 0
+        self.a_newly_infected = 0
 
+    def agents_to_dataframe(self):
+        '''
+        Vytvoreni dataframe s agenty a jejich daty (v prvnim kroku simulace), nad timto dataframe pak probihaji
+        vsechny operace v ramci simulace a podle nej i upravy mesa agentu - upravuji se jen ti mesa agenti,
+        u nichz doslo ke zmene, aniz by se musela prochazet cela popuace v cyklu (uspora vypocetniho casu, navic i v
+        pripade cyklu by bylo treba ukadat pomocne promenne do vars, dicts apod...df by i tedy v pripade for cykly
+        stale byl relevantnim ulozistem mezivysledku).
+        Dataframe je mozne ziskat i z datacollectoru (agent_vars po prislusnem nastaveni), jenze df v takovem pripade
+        obsahuje vechny kroky simulace a s velikosti df tak lin. roste i casova narocnost behu datacollectoru
+        (rozdil 24h a 30min cekani na vysledek behu simulace uz je celkem znat). V reseni s vlastnim df nastavenym
+        na pocatku je casove narocny jen prvni krok.
+        :return:
+        '''
+        for agent in self.agents:
+            self.df_agent_snapshot = self.df_agent_snapshot.append(agent.__dict__, ignore_index=True)
+        self.df_agent_snapshot['unique_id'] = self.df_agent_snapshot['unique_id'].astype(int)
+        self.df_agent_snapshot.set_index('unique_id', inplace=True, drop=False)
+        for agent in self.agents:
+            # uvodni nastaveni pivniho splavku (pro dobu, kdy je svet v poradku)
+            agent.calc_beer_consumption()
+
+    def set_applied_precautions(self):
+        """
+        Protiopatreni v atributech BeerModelu jsou nastavena jako aplikovana vlozenim do applied_precautions - model
+        pak pocita jen s opatrenimi a konfiguracemi, ktere byly zadany uzivatelem
+        :return:
+        """
         # lockdown nema implementovane options - je bud off, nebo on, ale muze mit upravenu hodnotu trigger_threshold
         lockdown = [p for p in self.precautions if p.startswith('lockdown')]
         if lockdown:
@@ -618,7 +656,7 @@ class BeerModel(Model):
                 # hodnota a "!" uveden neni, pouzije se vychozi hodnota v opatreni)
                 self.precaution_lockdown['trigger_threshold'] = int(lockdown[0][lockdown[0].index('!')+1:])
             self.applied_precautions.append(self.precaution_lockdown)
-            # lockdown je vlastne nejsirsi sektorove omezeni (uzavreni vsech lokaci mimo domov)
+            # lockdown je vlastne nejsirsi sektorove omezeni s uzavrenim vsech lokaci mimo lokace D
             self.precaution_lockdown['closed_locations'] = ['R', 'W', 'N', 'P', 'S']
         # ostatni opatreni maji ruzne volby...
         # existuje pozadavek na upravu opatreni ochrany dychacich cest?
@@ -739,31 +777,6 @@ class BeerModel(Model):
         # TODO tip: prehodit precautions do samostatne tridy, vyuzit dedicnost (lepsi rozsiritelnost)...ale az po obhajobe
         # TODO tip: upravit simulaci i pro scenare, kde se vyskytuje sector a lockdown s jinymi tt, napr.
         #  'app_tm!0,sector_r!10,lockdown!50', kde se aktualne spousti jen lockdown!50
-
-        # citace neuspesnych a uspesnych pokusu o infikaci
-        self.a_not_infected = 0
-        self.a_newly_infected = 0
-
-    def agents_to_dataframe(self):
-        '''
-        Vytvoreni dataframe s agenty a jejich daty (v prvnim kroku simulace), nad timto dataframe pak probihaji
-        vsechny operace v ramci simulace a podle nej i upravy mesa agentu - upravuji se jen ti mesa agenti,
-        u nichz doslo ke zmene, aniz by se musela prochazet cela popuace v cyklu (uspora vypocetniho casu, navic i v
-        pripade cyklu by bylo treba ukadat pomocne promenne do vars, dicts apod...df by i tedy v pripade for cykly
-        stale byl relevantnim ulozistem mezivysledku).
-        Dataframe je mozne ziskat i z datacollectoru (agent_vars po prislusnem nastaveni), jenze df v takovem pripade
-        obsahuje vechny kroky simulace a s velikosti df tak lin. roste i casova narocnost behu datacollectoru
-        (rozdil 24h a 30min cekani na vysledek behu simulace uz je celkem znat). V reseni s vlastnim df nastavenym
-        na pocatku je casove narocny jen prvni krok.
-        :return:
-        '''
-        for agent in self.agents:
-            self.df_agent_snapshot = self.df_agent_snapshot.append(agent.__dict__, ignore_index=True)
-        self.df_agent_snapshot['unique_id'] = self.df_agent_snapshot['unique_id'].astype(int)
-        self.df_agent_snapshot.set_index('unique_id', inplace=True, drop=False)
-        for agent in self.agents:
-            # uvodni nastaveni pivniho splavku (pro dobu, kdy je svet v poradku)
-            agent.calc_beer_consumption()
 
     def distribute_smart_app(self):
         '''
@@ -1109,11 +1122,14 @@ class BeerModel(Model):
         self.a_newly_infected = 0
 
         if self.schedule.steps == 0:
-            # uvodni nastaveni simulace v nultem kroku (slozita soukoli sveta se rozebehnou az od stepu 1)
+            # uvodni nastaveni simulace v nultem kroku, slozita soukoli sveta se rozebehnou az od stepu 1...
             # vytvoreni snapshotu s agenty
             self.agents_to_dataframe()
+            # nastaveni opatreni aplikovanych pro aktualni instanci
+            self.set_applied_precautions()
 
             if self.precaution_smart_app in self.applied_precautions:
+                # pokud je trasovaci aplikace soucasti simulace, distribuuji aplikace a tokeny mezi agenty
                 self.distribute_smart_app()
 
             # step zvysim o 1, protoze 0 je vychozi a komparacni stav u mnoha vlastnosti modelu (alt. jsem si
@@ -1124,7 +1140,7 @@ class BeerModel(Model):
             print(f'\n{self.simtype} scenario started -> applied precautions:',
                   ', '.join([f"{p['name']} (tt:{p['trigger_threshold']} {'->immediately triggered' if p['trigger_threshold']==0 else 'of positive tests' if self.precaution_test in self.applied_precautions else 'of mild/severe symptoms'})" for p in self.applied_precautions]))
         else:
-            # provedu krok modelu a kroky vsech agentu se vsemi souvisejicimi metodami
+            # provedu krok modelu a kroky vsech agentu
             self.schedule.step()
 
             if self.simtype == 'covid':
@@ -1132,7 +1148,7 @@ class BeerModel(Model):
                 # opatreni zapnu, nebo vypnu (hodnota is_active na True/False)
                 self.calc_thresholds()
                 # prepocitam sireni infekce (nove nakazy, prubehy nemoci, vyleceni, umrti)
-                # a rozdam karanteny, lokdowny, poukazky na testy a jine darky
+                # a rozdam karanteny, lockdowny, poukazky na testy a jine darky
                 self.infect_heal_or_die()
                 if self.precaution_smart_app['is_active']:
                     self.save_contacts_optimized()

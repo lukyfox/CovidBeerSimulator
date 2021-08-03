@@ -1,68 +1,67 @@
 {
-	"konfigurace":
-		{
-			"smart_app": {
-				"nazev": ["app"],
-				"mez_aktivace_deaktivace": [1],
-				"minimalni_trvani_dnu": ["max"],
-				"kategorie":{"0":"0-4","1":"5-14","2":"15-19","3":"20-49","4":"50-64","5":"65-74","6":"75-100"},
-				"podil_aplikaci":{"0":0.0,"1":0.1,"2":0.5,"3":0.7,"4":0.7,"5":0.3,"6":0.1},
-				"akce": ["mask"],
-				"efektivita_aplikace": [1],
-				"kontakty_uchovavat_dnu": [5]
-				},
-			"mask": {
-				"nazev": ["mask"],
-				"mez_aktivace_deaktivace": [1],
-				"minimalni_trvani_dnu": [10],
-				"ucinnost_dle_lokace": {"D": 0.1, "W": 1, "S": 1, "P": 1, "R": 0.5, "N": 1, "H": 1},
-				"ochrana": [0.95]
-			},
-			"sector": {
-				"nazev": ["sector"],
-				"mez_aktivace_deaktivace": [5],
-				"minimalni_trvani_dnu": [10],
-				"uzavrene_lokace": ["W", "P", "R", "N"]
-			},
-			"karantena": {
-				"nazev": ["quarantine"],
-				"mez_aktivace_deaktivace": [0],
-				"minimalni_trvani_dnu": [10],
-				"cilove_vekove_skupiny": ["max"],
-				"typ_karanteny": ["D"]
-			},
-			"test": {
-				"nazev": ["test"],
-				"mez_aktivace_deaktivace": [0],
-				"minimalni_trvani_dnu": [10],
-				"cilove_vekove_skupiny": ["12-100"],
-				"frekvence_testu_1_krat_za_dny": ["3"],
-				"typ_testu": ["antigen"],
-				"zpozdeni_vysledku": [0],
-				"presnost": [0.7],
-				"testovaci_lokace": ["W"]
-			},
+	"smart_app": {
+		"nazev": "app",
+		"mez_aktivace_deaktivace": 1,
+		"minimalni_trvani_dnu": "max",
+		"podil_aplikaci_v_kategorii":{"0-4":0.0,"5-14":0.1,"15-19":0.5,"20-49":0.7,"50-64":0.7,"65-74":0.3,"75-100":0.1},
+		"chytra_akce": "M",
+		"minimalni_trvani_chytre_akce_dnu": 10,
+		"efektivita_aplikace": 1,
+		"kontakty_uchovavat_dnu": 5
 		},
+	"mask": {
+		"nazev": "mask",
+		"mez_aktivace_deaktivace": 1,
+		"minimalni_trvani_dnu": 10,
+		"aplikovatelne_pro_vek": "5-100",
+		"ucinnost_dle_lokace": {"D": 0.1, "W": 1, "S": 1, "P": 1, "R": 0.5, "N": 1, "H": 1},
+		"ochrana": 0.95
+	},
+	"sector": {
+		"nazev": "sector",
+		"mez_aktivace_deaktivace": 5,
+		"minimalni_trvani_dnu": 10,
+		"aplikovatelne_pro_vek": "0-100",
+		"uzavrene_lokace": ["W", "P", "R", "N"]
+	},
+	"karantena": {
+		"nazev": "quarantine",
+		"mez_aktivace_deaktivace": 0,
+		"minimalni_trvani_dnu": 10,
+		"aplikovatelne_pro_vek": "0-100",
+		"typ_karanteny": "D"
+	},
+	"test": {
+		"nazev": "test",
+		"mez_aktivace_deaktivace": 0,
+		"minimalni_trvani_dnu": 10,
+		"aplikovatelne_pro_vek": "12-100",
+		"frekvence_testu_1_krat_za_dny": [3, 7],
+		"typ_testu": ["antigen", "pcr"],
+		"zpozdeni_vysledku_hodin": [0, 12],
+		"presnost": [0.7, 0.99],
+		"testovaci_lokace": "W"
+	},
 	"help":
 		{
-		"readme": "help obsahuje popis klicu nastaveni, text pred dvojteckou na zacatku oznacuje, pro jake opatreni je nastaveni platne (all = vsechna opatreni)",
-		"nazev": "all: nazev opatreni (str, napr. test)",
+		"readme": "help obsahuje dokumentaci nastaveni, text pred dvojteckou na zacatku oznacuje, pro jake opatreni je nastaveni platne (all = platne vsechna opatreni)",
+		"nazev": "all: nazev opatreni (napr. test)",
 		"mez_aktivace_deaktivace": "all: opatreni je aktivovano pri dosazeni zadane meze symptomaticky nemocnych, nebo pozitivne testovanych a deaktivovano pri snizeni pod mez (int, napr. 10=10 dnu)",
 		"minimalni_trvani_dnu": "all: minimalni delka trvani opatreni (i v pripade snizeni hodnoty vyse pod mez deaktivace), hodnota je int, napr. 10, nebo max pro trvani do konce simulace",
 		"kategorie": "smart_app: vekova kategorie od-do, napr. 20-49, pro kterou je aplikovano dalsi nastaveni opatreni; jedna se o tabulkova data, proto je nastaveni pro vyssi prehlednost strukturovano jako {index_i:hodnota_i}",
 		"podil_aplikaci": "smart_app: podil aplikaci nebo tokenu v populaci, resp. ve vekovych kategoriich z nastaveni kategorie; jedna se o tabulkova data {index_i:float_hodnota_i}",
 		"akce": "smart_app: oznaceni akce, ktera je provedena na vytrasovane kontakty symptomaticky nemocneho nebo pozitivne testovaneho; str - Q=karantena na kontakt, QD=karantena na domacnost kontaktu, T=test kontaktu, M=rouska kontaktu, MD=rouska domacnosti kontaktu",
 		"efektivita_aplikace": "smart_app: efektivita trasovani, tj. s jakou pravdepodobnosti je vytrasovan kontakt nakazeneho (float, napr. 1=100%)",
-		"kontakty_uchovavat_dnu": "smart_app: trvani zaznamu kontaktu v databazi - po uplynuti doby je zaznam smazan (int, napr. 5=5 dnu)"
+		"kontakty_uchovavat_dnu": "smart_app: trvani zaznamu kontaktu v databazi - po uplynuti doby je zaznam smazan (int, napr. 5=5 dnu)",
 		"ucinnost_dle_lokace": "mask: ucinnost rousek se muze lisit podle lokace - napr. v zamestnani je celodenni noseni rousky snazsi nez doma; strukturovano jako {lokace: pravdepodobnost_ochrany}, napr. {D:0.1} = noseni rousky doma se dodrzuje desetinu casu",
-		"ochrana": "mask: ucinnost rousky (float, napr. 0.95=95% ucinnost ochrany pred sirenim nakazy)"
-		"uzavrene_lokace": "sector, lockdown: seznam lokaci, ktere jsou v ramci opatreni uzavreny, W=firmy mimo nakupnich zon a restauraci, P=parky a priroda, R=restaurace, N=nakupni zony, uvedeni vsech zon = lockdown"
-		"cilove_vekove_skupiny": "quarantine, test: vekove skupiny, ve kterych je opatreni aplikovano (str, max=vsechny skupiny, 12-100=agenti ve veku 12-100 let,
+		"ochrana": "mask: ucinnost rousky (float, napr. 0.95=95% ucinnost ochrany pred sirenim nakazy)",
+		"uzavrene_lokace": "sector, lockdown: seznam lokaci, ktere jsou v ramci opatreni uzavreny, W=firmy mimo nakupnich zon a restauraci, P=parky a priroda, R=restaurace, N=nakupni zony, uvedeni vsech zon = lockdown",
+		"aplikovatelne_pro_vek": "quarantine, test: vekove skupiny, ve kterych je opatreni aplikovano (str, max=vsechny skupiny, 12-100=agenti ve veku 12-100 let",
 		"typ_karanteny": "quarantine, seznam lokaci - D = karantena pro spolecnou domacnost, W = pracovni a skolni kol.",
 		"frekvence_testu_1_krat_za_dny": "test: jak casto je mozne se testovat (int, napr. 3=test jednou za 3 dny)",
 		"typ_testu": "test: typ testu - antigen nebo pcr (pcr zatim v TODO), str",
 		"zpozdeni_vysledku": "test: zpozdeni vysledku testu v hodinach (int, napr. 0=okamzity vysledek)",
 		"presnost": "test: presnost testu, tj. pravdepodobnost odhaleni pozitivniho vysledku (float, napr. 0.7=70%, falesne pozitivni vysledky nejsou implementovany)",
 		"testovaci_lokace": "test: lokace, na kterych probiha testovani (str, napr. W=testovani na pracovistich"
-		},
-	
+		}
+}
