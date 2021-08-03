@@ -331,6 +331,15 @@ class BeerAgent(Agent):
                 # agent mel puvodne namireno jinam, zmenu musim poznacit, abych zajistil nezvyseni spotreby lahvacu pri neplanovanych
                 unscheduled_home = True
             place_to_move = 'D'
+        elif self.model.simtype == 'covid' and place_to_move in ('R', 'N'):
+            # pokud se otevrene siri epidemie, budou se agenti snazit vyhnout riziku nakazy ve zbytnych lokacich - snaha
+            # bude tim vetsi, cim vice nemocnych nebo pozitivne testovanych agentu bude model obsahovat a cim starsi
+            # je agent (agent vi, ze s poctem nakazenych roste pravdepodobnost infikace a s vekem i riziko vaznejsiho
+            # prubehu a radeji tedy zustane doma)
+            p = self.model.get_threshold() * self.model.agent_age_categs.index(self.age_categ) / (2 * self.model.df_agent_snapshot.shape[0])
+            if p < random.random():
+                unscheduled_home = True
+                place_to_move = 'D'
 
         elif self.model.precaution_lockdown['is_active']:
             # pokud agent neni nemocny ani v karantene, pak kontroluji sektorova omezeni nebo lockdown
@@ -727,14 +736,11 @@ class BeerModel(Model):
                     self.precaution_smart_app['smart_action'].append('M')
                     self.precaution_smart_app['name'] += '-mask'
             self.applied_precautions.append(self.precaution_smart_app)
-        # TODO tip: prehodit precautions do samostatne tridy, vyuzit dedicnost (lepsi rozsiritelnost)
+        # TODO tip: prehodit precautions do samostatne tridy, vyuzit dedicnost (lepsi rozsiritelnost)...ale az po obhajobe
         # TODO tip: upravit simulaci i pro scenare, kde se vyskytuje sector a lockdown s jinymi tt, napr.
         #  'app_tm!0,sector_r!10,lockdown!50', kde se aktualne spousti jen lockdown!50
 
-        # running je featute pro BatchRunner, umoznuje ukoncit beh po dosazeni podminky (zde zatim nepouzito)
-        #self.running = True
-        #self.step_counter = 0
-
+        # citace neuspesnych a uspesnych pokusu o infikaci
         self.a_not_infected = 0
         self.a_newly_infected = 0
 
@@ -777,27 +783,43 @@ class BeerModel(Model):
                 # zmenu stavu provedu i v instancich agentu
                 self.agents[idx]['smart_app_active'] = True
 
-    def calc_thresholds(self):
-        '''
-        Spousteni opatreni pri dosazeni thresholdu a vypinani opatreni po uklidneni situace. Threshold je soucet
-        pozitivne testovanych v poslednich 7 dnech (pokud je aktivni opatreni testovani nebo smart action testovani
-        u eRousky) s poctem symptomaticky nemocnych v poslednich 7 dnech.
-        :return:
-        '''
+    def get_threshold(self):
+        """
+        Threshold je soucet pozitivne testovanych v poslednich 7 dnech (pokud je aktivni opatreni testovani
+        nebo smart action testovani u eRousky) s poctem symptomaticky nemocnych v poslednich 7 dnech.
+        :return: current_level je aktualni hodnota thresholdu
+        """
         step = self.schedule.steps
         # ramec pro pocet testovanych musi zacinat od 1
         start_step = 1 if step < 169 else step - 169
-        current_level = 0
-        if self.df_agent_snapshot.empty:
-            # pocet pozitivne testovanych za 7 poslednich dni (pokud neni opatreni testovani aktivni, je hodnota rovna 0)
-            current_level = self.df_agent_snapshot[
-                self.df_agent_snapshot['positive_test_at_step'].between(start_step,step-1)].shape[0]
+
+        # pocet pozitivne testovanych za 7 poslednich dni (pokud neni opatreni testovani aktivni, je hodnota rovna 0)
+        mask_positively_tested = (self.df_agent_snapshot['positive_test_at_step'].between(start_step,step-1))
+        current_level = self.df_agent_snapshot.loc[mask_positively_tested].shape[0]
+
         # maska pro pocet symptomatickych nemocnych za poslednich 7 dni, finalni current_level je soucet obou hodnot
         mask_1st_step_in_bed = (self.df_agent_snapshot['super_spreader_till'] > 0) & \
-                                   (self.df_agent_snapshot['super_spreader_till'].between(start_step,step-1)) & \
-                                   (self.df_agent_snapshot['sicktype'].isin(['mild', 'severe']))
-        current_level += self.df_agent_snapshot.loc[mask_1st_step_in_bed].shape[0]
+                               (self.df_agent_snapshot['super_spreader_till'].between(start_step,step-1)) & \
+                               (self.df_agent_snapshot['sicktype'].isin(['mild', 'severe']))
 
+        # agenti, kteri meli pozitivni test a v poslednich 7 dnech se dostali do symptomaticke faze, musi byt odecteni
+        # od mask_1st_step_in_bed, jinak by current_level obsahoval duplicity; metoda symmetric_difference provadi
+        # XOR operaci pro sjednoceni indexu (bitwise operator ^ je v tomto pripade deprecated, tak jdu s dobou...)
+        current_level += self.df_agent_snapshot.loc[mask_1st_step_in_bed].index.symmetric_difference(
+            self.df_agent_snapshot.loc[mask_positively_tested].index
+        ).shape[0]
+
+        return current_level
+
+    def calc_thresholds(self):
+        '''
+        Spousteni opatreni pri dosazeni thresholdu a vypinani opatreni po uklidneni situace. Threshold current_level
+        je soucet pozitivne testovanych v poslednich 7 dnech (pokud je aktivni opatreni testovani nebo smart action
+        testovani u eRousky) s poctem symptomaticky nemocnych v poslednich 7 dnech.
+        :param: get_current_level - pokude je True, vraci funkce aktualni hondotu thresholdu a nic dalsiho neprovadi
+        :return:
+        '''
+        current_level = self.get_threshold()
         for precaution in self.applied_precautions:
             # pro kazde opatreni v seznamu aplikovanych opatreni porovnam prislusny threshold vuci modelu a pripadne
             # opatreni aktivuji
