@@ -1,0 +1,25 @@
+python main.py -g # generovani populace
+
+# idealni rousky od pocatku, idealni rousky od 1 symptomatika a to same pro redukovane rousky
+# motivace pro 0/1 = zjistit, jaky vliv ma pozdejsi prijeti opatreni
+python main.py --precautions mask_i!0;mask_i!1;mask_r!0;mask_r!1
+
+# kombinace rousek a testovani
+-p mask_r!1,test_wd!0
+
+python main.py -p test_w!1;test_wd!1;test_pw!1;test_pwd!1test_w!10;test_wd!10;test_pw!10;test_pwd!10;
+python main.py -p quarantine_d!1;quarantine_wd!1;quarantine_d!10;quarantine_wd!10;
+python main.py -p sector_r!1;sector_rw!1;lockdown!10;sector_r!10;sector_rw!10;lockdown!10;
+python main.py -p app_iq!1;app_it!1;app_im!1;app_q!1;app_t!1;app_m!1;app_qd!1;app_md!1;app_q!10;app_t!10;app_m!10;app_qd!10;app_md!10;
+
+# tt10 = vliv pozdniho zavedeni opatreni
+
+
+# zakladni scenare, tt 0 prehodnotit (mimo testu) a radeji porovnavat tt 1 s tt 10
+python main.py -n 4320 -p app_iq!0;app_iq!1;app_it!1;app_im!1;app_q!0;app_q!1;app_t!1;app_m!1;app_qd!0;app_md!1;sector_r!1;sector_rw!1;lockdown!1;lockdown!10;quarantine_d!0;quarantine_d!1;quarantine_wd!1;test_w!0;test_w!1;test_wd!1;test_wd!0;mask_i!0;mask_i!1;mask_r!0;mask_r!1;test_wd!10;quarantine_wd!10;sector_rw!10;app_iqd!10
+# slozena opatreni s tt1 a tt10
+# kombinace eRousky QD tt1 s testovanim dw tt0, tt1
+# kombinace eRousky MD tt1 s testovanim dw tt1
+# kombinace karantenou D tt1 s testovanim dw tt0
+# kombinace testovani PCR w tt1 a karantenou D tt1
+app_qd!1,test_dw!1;app_md!1,test_dw!1;quarantine_d!1,test_dw!1;test_pw!1,quarantine_d!1,mask_r!1
