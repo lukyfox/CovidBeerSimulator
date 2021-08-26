@@ -26,10 +26,10 @@ class BeerModel(Model):
     Trida modelu - obsahuje svet agentu a aplikaci globalnich pravidel
     """
 
-    def __init__(self, data_path=None, simtype='covid', random_seed = 42, max_steps = 17520,
-                 precautions=[]):
+    def __init__(self, data_path=None, simtype='covid', random_seed=42, max_steps=17520,
+                 precautions=[], random_patient_0=False):
         super().__init__()
-        self.reset_randomizer(random_seed)
+        #self.reset_randomizer(random_seed)
         self.random.seed(random_seed)
         self.seed = random_seed
         random.seed(random_seed)
@@ -48,7 +48,7 @@ class BeerModel(Model):
         self.width = self.grid_map.shape[1] # sirka sveta
         self.height = self.grid_map.shape[0] # vyska sveta
 
-        # define multigrid toroidal environment
+        # definice toroidalniho multigridu pro pohyb agentu a vyuziti funkce pro zjisteni obsahu bunky
         self.grid = MultiGrid(self.width, self.height, True)
         # prevedeni 2D vektoru na 1D (itertools je rychlejsi nez vnorene cykly)
         place_list = list(itertools.chain(*self.grid_map.values.tolist()))
@@ -66,7 +66,7 @@ class BeerModel(Model):
         for place in place_list:
             key = list(place.keys())[0]
             value = list(place.values())[0]
-            # klic obsahuje sekvenci vyznamu mista (napr. WN pro nakupni centrum)
+            # klic z generatoru obsahuje sekvenci vyznamu mista (napr. WN pro nakupni centrum), musim je tedy rozdelit
             if 'D' in key:
                 self.places['houses'].append(value)
             if 'W' in key:
@@ -81,6 +81,9 @@ class BeerModel(Model):
                 self.places['shops'].append(value)
             if 'H' in key:
                 self.places['hospital'].append(value)
+        # uzavrene lokace R z duvodu vysoke nemocnosti personalu nebo karanteny na cely kolektiv, lokace jinych
+        # organizaci zanedbavam
+        self.explicitly_closed_locations = {}
 
         # vytvoreni novych agentu a umisteni do modelu
         self.agents = []
@@ -120,13 +123,17 @@ class BeerModel(Model):
             #self.grid.place_agent(agent, (int(agent.coord_house_xgrid), int(agent.coord_house_ygrid)))
             self.schedule.add(agent)
         if simtype == 'covid':
-            mask_suitable_spreaders = (self.df_agents['age'] > 19) & \
-                                      (self.df_agents['house_id'] != self.df_agents['work_id']) & \
-                                      (self.df_agents['sicktype']=='asymptomatic')
-            # v simulaci s infekci vyberu na pocatku jednoho asymptomatickeho agenta pro infikaci - jde vzdy o agenta
-            # pracujiciho (kvuli kontaktum v kolektivu), starsiho 19 let a s asymptomatickym prubehem onemocneni
-            # (napr. takoveho, co se prave vratil ze zajezdu v Dolomitech...)
-            patient_0 = self.agents[self.df_agents.loc[mask_suitable_spreaders].sample().index[0]]
+            if random_patient_0:
+                # pokud je
+                mask_suitable_spreaders = (self.df_agents['age'] > 19) & \
+                                          (self.df_agents['house_id'] != self.df_agents['work_id']) & \
+                                          (self.df_agents['sicktype']=='asymptomatic')
+                # pokud ma byt agent nahodny v simulaci s infekci vyberu na pocatku jednoho asymptomatickeho agenta pro infikaci - jde vzdy o agenta
+                # pracujiciho (kvuli kontaktum v kolektivu), starsiho 19 let a s asymptomatickym prubehem onemocneni
+                # (napr. takoveho, co se prave vratil ze zajezdu v Dolomitech...)
+                patient_0 = self.agents[self.df_agents.loc[mask_suitable_spreaders].sample().index[0]]
+            else:
+                patient_0 = self.agents[226]
             # vsechny milniky onemocneni bezi od kroku 1
             patient_0.calc_infect_periods(1)
             patient_0.infected_by = [-1]
@@ -228,7 +235,8 @@ class BeerModel(Model):
             'min_duration_in_steps': data['test']['minimalni_trvani_dnu'] * 24,
             'stop_precaution_at': 0,
             'chapters': 0,
-            # seznam lokaci, na kterych probiha testovani - W = skoly a pracoviste, D =  doma (nebo odberova mista)
+            # seznam lokaci, na kterych probiha testovani - W = skoly a pracoviste, D = doma (nebo odberova mista)
+            # v pripade W musim pocitat i s agenty pracujicimi v lokacich R a N
             'test_places': data['test']['testovaci_lokace'],
             'is_active': False
         }
@@ -426,11 +434,11 @@ class BeerModel(Model):
         """
         step = self.schedule.steps
         # ramec pro pocet testovanych musi zacinat od 1
-        start_step = 1 if step < 169 else step - 169
+        start_step = 1 if step < 169 else step - 168
 
         # pocet pozitivne testovanych za 7 poslednich dni (pokud neni opatreni testovani aktivni, je hodnota rovna 0)
         mask_positively_tested = (self.df_agent_snapshot['positive_test_at_step'].between(start_step,step-1))
-        current_level = self.df_agent_snapshot.loc[mask_positively_tested].shape[0]
+        #current_level = self.df_agent_snapshot.loc[mask_positively_tested].shape[0]
 
         # maska pro pocet symptomatickych nemocnych za poslednich 7 dni, finalni current_level je soucet obou hodnot
         mask_1st_step_in_bed = (self.df_agent_snapshot['super_spreader_till'] > 0) & \
@@ -440,9 +448,12 @@ class BeerModel(Model):
         # agenti, kteri meli pozitivni test a v poslednich 7 dnech se dostali do symptomaticke faze, musi byt odecteni
         # od mask_1st_step_in_bed, jinak by current_level obsahoval duplicity; metoda symmetric_difference provadi
         # XOR operaci pro sjednoceni indexu (bitwise operator ^ je v tomto pripade deprecated, tak jdu s dobou...)
-        current_level += self.df_agent_snapshot.loc[mask_1st_step_in_bed].index.symmetric_difference(
+        current_level = self.df_agent_snapshot.loc[mask_1st_step_in_bed].index.symmetric_difference(
             self.df_agent_snapshot.loc[mask_positively_tested].index
         ).shape[0]
+
+        if self.schedule.steps == 168:
+            x = 1
 
         return current_level
 
@@ -463,12 +474,12 @@ class BeerModel(Model):
                 precaution['chapters'] += 1 # kolikrat se pri simulaci opatreni aktivovalo
                 precaution['stop_precaution_at'] = self.schedule.steps + precaution['min_duration_in_steps']
             elif precaution['is_active'] and precaution['trigger_threshold'] >= current_level \
-                    and self.schedule.steps >= precaution['stop_precaution_at'] and self.schedule.steps > 504:
-                # pokud je soucasny stav thresholdove hodnoty v modelu nizsi nebo roven thresholdu opatreni a vyprsi
-                # minimalni trvani opatreni a ubehne ochranna doba (3 tydny, aby se opareni nevypnulo predcasne),
-                # opatreni vypinam - tyka se i opatreni aktivovanych od pocatku (param !0) s vyjimkou opatreni
-                # vyjmenovanych nize (ty nemaji vliv na spotrebu piva, proto je muzu nechat bezet)
-                #if not (precaution['trigger_threshold'] == 0 and precaution not in (self.precaution_test, self.precaution_mask)):
+                    and self.schedule.steps > precaution['stop_precaution_at']: #and self.schedule.steps > 504:
+                # pokud je soucasny stav thresholdove hodnoty v modelu nizsi nebo roven thresholdu opatreni, opatreni
+                # vypinam
+                #
+                # self.schedule.steps > 504 byla ochranna doba - pocatecni
+                # 3 tydny pro opatreni aktivovana od pocatku (param !0), po uprave kodu jiz neni potreba
                 precaution['is_active'] = False
                 precaution['stop_precaution_at'] = 0
 
@@ -513,7 +524,7 @@ class BeerModel(Model):
 
             for unique_id in contacts:
                 if self.precaution_smart_app['smart_action_prob'] == 1 or self.precaution_smart_app['smart_action_prob'] > random.random():
-                    # pokud je pravdepodobnost nasledovani smart_action rovna 1, setrim random generator
+                    # pokud je pravdepodobnost nasledovani smart_action rovna 1, akce se provede vzdy
                     if 'Q' in self.precaution_smart_app['smart_action'] and \
                             self.df_agent_snapshot.at[unique_id, 'quarantine_till'] < \
                             self.schedule.steps + self.precaution_smart_app['smart_action_duration']:
@@ -546,6 +557,39 @@ class BeerModel(Model):
                         for affected_id in self.df_agent_snapshot.loc[mask_household].index.to_list():
                             self.agents[affected_id].mask_yourself()
 
+    def demask_individually_masked_agents(self):
+        """
+        Sejmuti rousek u agentu, kteri je nosi po vytrasovani po dobu smart_action_duration
+        :return:
+        """
+        mask_to_demask = (self.df_agent_snapshot['has_mask_till'] == self.schedule.steps)
+        self.df_agent_snapshot.loc[mask_to_demask, 'has_mask_till'] = 0
+        for agent_id in self.df_agent_snapshot.loc[mask_to_demask].index.to_list():
+            self.agents[agent_id].has_mask_till = 0
+
+    def is_closed_explicitly(self, location_id):
+        # {id_lokace odpovida work_id: {
+        #   'epmloyees': pocet zamcu celkem,
+        #   'quarantinized': aktualni pocet zamcu v karantene}}
+        if self.explicitly_closed_locations[location_id]['quarantinized'] == 0:
+            return False
+        else:
+            return location_id in self.explicitly_closed_locations.keys() and \
+                   (self.explicitly_closed_locations[location_id]['quarantinized'] / self.explicitly_closed_locations[location_id]['quarantinized']) > 0.75
+
+    def change_employee_state(self, location_id, operation='decrease'):
+        if location_id in self.explicitly_closed_locations.keys():
+            if operation == 'decrease':
+                self.explicitly_closed_locations[location_id]['quarantinized'] -= 1
+            else:
+                self.explicitly_closed_locations[location_id]['quarantinized'] += 1
+
+    def set_employee_state(self, location_id):
+        if location_id not in self.explicitly_closed_locations.keys():
+            self.explicitly_closed_locations[location_id] = {
+                'epmloyees': self.df_agent_snapshot[self.df_agent_snapshot['work_id'] == location_id].shape[0],
+                'quarantinized': 0
+            }
 
     def save_infected_agent(self, agent, vector_id, ir=0, place=None, threshold=0):
         """
@@ -593,6 +637,12 @@ class BeerModel(Model):
         for agent in self.df_agent_snapshot[mask_freed_agents].itertuples():
             self.agents[int(agent.unique_id)].dequarantinize_yourself()
 
+        # filtr agentu, kterym karantena prave skoncila a pracuji v lokacich R, pouziji pro zmenu citace
+        # pro pripadne otevreni jejich lokace R
+        mask_r_employees_out_of_quarantine = mask_freed_agents & (self.df_agent_snapshot['work_id'].isin(self.explicitly_closed_locations.keys()))
+        for r in self.df_agent_snapshot.loc[mask_r_employees_out_of_quarantine].itertuples():
+            self.change_employee_state(r.work_id, operation='decrease')
+
         if self.precaution_test['is_active']:
             # pokud je aktivni opatreni testovani, vyfiltruji agenty, kteri maji byt otestovani - nachazi se
             # na testovacim miste a dosahli frekvence testovani
@@ -618,15 +668,18 @@ class BeerModel(Model):
                 # pokud je aktivni karantena, pak do karanteny putuje sirsi skupina agentu
                 for typ in self.precaution_quarantine['quarantine_type']:
                     if typ == 'W':
-                        # karantena na pracovni kolektiv, ve kterem se vyskytuje nakazeny
+                        # karantena na pracovni, nebo skolni kolektiv, ve kterem se vyskytuje nakazeny agent
+                        # (karantena muze zasahnout restauraci nebo obchod a v takovem pripad2 je dana lokace
+                        # identifikovana svym work_id uzavrena)
+                        # TODO: uzavreni konkretnich lokaci, pokud jsou zamestananci v karantene alespon ze 75%
                         mask_qmates = (self.df_agent_snapshot['coord_work_xgrid'] == agent.coord_work_xgrid) & \
                                       (self.df_agent_snapshot['coord_work_ygrid'] == agent.coord_work_ygrid) & \
-                                      (self.df_agent_snapshot['work_type'] == 'firma')
-                    elif typ == 'S':
-                        # karantena na celou skolu
-                        mask_qmates = (self.df_agent_snapshot['coord_work_xgrid'] == agent.coord_work_xgrid) & \
-                                      (self.df_agent_snapshot['coord_work_ygrid'] == agent.coord_work_ygrid) & \
-                                      (self.df_agent_snapshot['work_type'] == 'skola')
+                                      (self.df_agent_snapshot['work_type'] != 'doma')
+                    #elif typ == 'S':
+                    #    # karantena na celou skolu
+                    #    mask_qmates = (self.df_agent_snapshot['coord_work_xgrid'] == agent.coord_work_xgrid) & \
+                    #                  (self.df_agent_snapshot['coord_work_ygrid'] == agent.coord_work_ygrid) & \
+                    #                  (self.df_agent_snapshot['work_type'] == 'skola')
                     else:
                         # v jakemkoliv jinem pripade (melo by jit o 'D') uvazuji karantenu na celou domacnost
                         mask_qmates = (self.df_agent_snapshot['coord_house_xgrid'] == agent.coord_house_xgrid) & \
@@ -634,11 +687,22 @@ class BeerModel(Model):
                     for mate in self.df_agent_snapshot[mask_qmates].itertuples():
                         self.agents[int(mate.unique_id)].quarantinize_yourself()
 
-        # pokud je aktivni opatreni precaution_smart_app, pouziju masku i pro trasovani a pridam dodatecny filtr
-        # pro agenty s aktivni eRouskou
+        # filtr agentu, kterym karantena zacala a pracuji v lokacich R, pouziji pro zmenu citace
+        # pro uzavreni lokace R
+        mask_r_employees_in_quarantine = mask_positively_tested_or_sick_agents & (self.df_agent_snapshot['work_id'].isin(self.explicitly_closed_locations.keys()))
+        for r in self.df_agent_snapshot.loc[mask_r_employees_in_quarantine].itertuples():
+            self.change_employee_state(r.work_id, operation='increase')
+
+
+        # operace pri aktivnim opatreni precaution_smart_app
         if self.precaution_smart_app['is_active'] and not self.df_smart_contacts.empty:
+            # pridam k masce mask_positively_tested_or_sick_agents dodatecny filtr pro agenty s aktivni eRouskou
             mask_app_tracer = mask_positively_tested_or_sick_agents & (self.df_agent_snapshot['smart_app_active']==True)
+            # a vytrasuji kontakty
             self.trace_contacts_optimized(mask_app_tracer)
+            if 'M' in self.precaution_smart_app['smart_action'] or 'MD' in self.precaution_smart_app['smart_action']:
+                # pokud je rouska soucasti smart_action, necham ji sundat agenty po smart_action_duration
+                self.demask_individually_masked_agents()
 
         # vyfiltruji agenty, u kterych posledni den onemocneni konci umrtim a odeberu je z modelu
         mask_killed_agents = (self.df_agent_snapshot['sickness_result'] == 'exitus') & \
@@ -731,6 +795,13 @@ class BeerModel(Model):
             'a_plain_infection_attempts': self.a_not_infected,
             'a_postponed_r_visits': self.a_postponed_r_visit,
             'a_realized_r_visits': self.a_realized_r_visit,
+            'a_agents_in_d': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='D'].shape[0],
+            'a_agents_in_r': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='R'].shape[0],
+            'a_agents_in_n': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='N'].shape[0],
+            'a_agents_in_w': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='W'].shape[0],
+            'a_agents_in_s': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='S'].shape[0],
+            'a_agents_in_p': self.df_agent_snapshot.loc[self.df_agent_snapshot['current_place']=='P'].shape[0],
+            'a_agents_in_other_places': self.df_agent_snapshot.loc[~self.df_agent_snapshot['current_place'].isin(['D','R','N','W','S','P'])].shape[0],
             'step_duration': time.time() - start
         },
             ignore_index=True)
@@ -754,10 +825,12 @@ class BeerModel(Model):
             self.agents_to_dataframe()
             # nastaveni opatreni aplikovanych pro aktualni instanci
             self.set_applied_precautions()
-
             if self.precaution_smart_app in self.applied_precautions:
                 # pokud je trasovaci aplikace soucasti simulace, distribuuji aplikace a tokeny mezi agenty
                 self.distribute_smart_app()
+            # nasteveni lokaci R pro pripadne uzavreni z duvodu nedostatku personalu
+            for pub in self.places['pubs']:
+                self.set_employee_state(pub[0])
 
             # step zvysim o 1, protoze 0 je vychozi a komparacni stav u mnoha vlastnosti modelu (alt. jsem si
             # jako default values mohl vybrat np.nan, -1,...), ale start od 1 nema na vysledky simulace
@@ -765,7 +838,7 @@ class BeerModel(Model):
             self.schedule.steps += 1
             # vypis aplikovanych opatreni a poctu kroku uzivateli
             print(f'\n{self.simtype} scenario started -> applied precautions:',
-                  ', '.join([f"{p['name']} (tt:{p['trigger_threshold']} {'->immediately triggered' if p['trigger_threshold']==0 else 'of positive tests' if self.precaution_test in self.applied_precautions else 'of mild/severe symptoms'})" for p in self.applied_precautions]))
+                  ', '.join([f"{p['name']} (tt:{p['trigger_threshold']} {'->immediately triggered' if p['trigger_threshold']==0 else 'of positive tests' if self.precaution_test in self.applied_precautions and not p['name'].startswith('test') else 'of mild/severe symptoms'})" for p in self.applied_precautions]))
         else:
             # provedu krok modelu a kroky vsech agentu
             self.schedule.step()

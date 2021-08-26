@@ -75,7 +75,7 @@ def final_vizualizer(df_datastore, max_steps):
     path = os.path.join(os.path.join(os.getcwd(), 'data/results/{}_final_results.html'.format(max_steps)))
     fig.write_html(path)
 
-def run(params_library):
+def run(params_library, iteration=''):
     """
 
     :param params_library:
@@ -85,6 +85,11 @@ def run(params_library):
     max_steps = params_library[0]['fixed_params']['max_steps']
     print('\nSteps to be simulated =', max_steps, f'({max_steps/24} days) for each simulation scenario',
           '(multiprocessing mode)')
+
+    if iteration:
+        if params_library[0]['fixed_params']['seed']:
+            # TODO: implementace iteraci
+            pass
 
     for storybook in params_library:
         batch_run = BatchRunnerMP(BeerModel, nr_processes=os.cpu_count()-1,
@@ -111,8 +116,13 @@ def run(params_library):
     if 'precautions' in df_datastore.columns.values:
         df_datastore.loc[(df_datastore['precautions'].isna()), 'precautions'] = df_datastore['simtype']
     else:
-        df_datastore['precautions'] = 'NA'
+        df_datastore['precautions'] = df_datastore['simtype']
 
-    path = os.path.join(os.path.join(os.getcwd(), 'data/results/{}_final_results.csv'.format(max_steps)))
+    df_datastore['scenario_rating'] = df_datastore['beer_cepovane'] + df_datastore['beer_lahvove'] - \
+                                      10*df_datastore['epi_infected'] - 1000*df_datastore['epi_death_agents']
+
+    if iteration:
+        iteration = f'_{iteration}'
+    path = os.path.join(os.path.join(os.getcwd(), 'data/results/{}_final_results{}.csv'.format(max_steps, iteration)))
     df_datastore.to_csv(path, sep=';')
     final_vizualizer(df_datastore, max_steps)

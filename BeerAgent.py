@@ -62,7 +62,7 @@ class BeerAgent(Agent):
         # v pohybovem retezci]
         self.beer_fundamentalist = agent.prechod_na_lahvove_podil # pravdepodobnost nahrady cepovaneho lahvovym pri nemoznosti jit do restaurace
 
-        self.tested = {'antigen': 0, 'pcr': 0} # pocet testu, ktere agent podstoupil
+        #self.tested = {'antigen': 0, 'pcr': 0} # pocet testu, ktere agent podstoupil
         self.tested_at_step = 0
         self.positive_test_at_step = 0
         self.smart_app_active = False # True znamena, ze dany uzivatel ma zapnutou aplikaci eRouska
@@ -260,7 +260,7 @@ class BeerAgent(Agent):
         if self.infectious_rate > 0:
             min_age = int(self.model.precaution_mask['applicable_age_categ'].split('-')[0])
             if (self.model.precaution_mask['is_active'] and int(self.age) >= int(min_age)) or (self.has_mask_till >= self.model.schedule.steps):
-                # pokud je aktivni opatreni ochrany dychacich cest (ODD), zmensim ir o protektivni ucinek OOD a zapocitam
+                # pokud je aktivni opatreni ochrany dychacich cest (ODD), zmensim ir o protektivni ucinek ODD a zapocitam
                 # i vliv prostredi podle aktualni lokace agenta
                 self.infectious_rate *= (1 - self.model.precaution_mask['base_protective_value']*self.model.precaution_mask['protection'][self.current_place])
             if self.current_place == 'P':
@@ -325,7 +325,7 @@ class BeerAgent(Agent):
                 # agenty v mild a severe sympto fazi pak resim v ramci beer_yourself
                 unscheduled_home = True
             place_to_move = 'D'
-        elif self.model.simtype == 'covid' and place_to_move in ('R', 'N'):
+        if self.model.simtype == 'covid' and place_to_move in ('R', 'N'):
             # pokud se otevrene siri epidemie, budou se agenti snazit vyhnout riziku nakazy ve zbytnych lokacich - snaha
             # bude tim vetsi, cim vice nemocnych nebo pozitivne testovanych agentu bude model obsahovat a cim starsi
             # je agent (agent vi, ze s poctem nakazenych roste pravdepodobnost infikace a s vekem i riziko vaznejsiho
@@ -340,21 +340,25 @@ class BeerAgent(Agent):
                     self.model.a_postponed_r_visit += 1
                 place_to_move = 'D'
 
-        elif self.model.precaution_lockdown['is_active']:
+        if self.model.precaution_lockdown['is_active']:
             # pokud agent neni nemocny ani v karantene, pak kontroluji sektorova omezeni nebo lockdown
-            if 'R' in self.model.precaution_lockdown['closed_locations'] and place_to_move == 'R':
-                # sektorove uzavreni restauraci - agenti vyberou nahradni lokaci (domu, do prirody nebo na nakup)
-                random_place = self.random.choice(['D', 'P', 'N'])
-                unscheduled_home = True
+            if place_to_move in self.model.precaution_lockdown['closed_locations']:
+                # sektorove uzavreni lokaci nebo lockdown - agenti vyberou nahradni lokaci (domu, do prirody,
+                # do restaurace nebo na nakup), pokud nejsou dane lokace uzavrene (vzdy ale bude otevrena minimalne
+                # lokace D)
+                allowed_places = [loc for loc in ['D', 'P', 'N', 'R'] if loc not in self.model.precaution_lockdown['closed_locations']]
+                random_place = self.random.choice(allowed_places)
+                if place_to_move == 'R' and 'R' not in allowed_places and random_place == 'D':
+                    unscheduled_home = True
                 place_to_move = random_place
-            if 'W' in self.model.precaution_lockdown['closed_locations'] and place_to_move == 'W':
-                # sektorove uzavreni firem - agenti vyberou nahradni lokaci (domu, do prirody nebo na nakup)
-                random_place = self.random.choice(['D', 'P', 'N'])
-                place_to_move = random_place
-            if 'S' in self.model.precaution_lockdown['closed_locations'] and place_to_move == 'S':
-                # sektorove uzavreni skol - agenti vyberou nahradni lokaci (s nejvetsi pravdepodonosti domu, obcas i do prirody nebo na nakup)
-                random_place = self.random.choice(['D', 'P', 'D', 'N', 'D'])
-                place_to_move = random_place
+            #if 'W' in self.model.precaution_lockdown['closed_locations'] and place_to_move == 'W':
+            #    # sektorove uzavreni firem - agenti vyberou nahradni lokaci
+            #    random_place = self.random.choice(['D', 'P', 'N'] ^ self.model.precaution_lockdown['closed_locations'])
+            #    place_to_move = random_place
+            #if 'S' in self.model.precaution_lockdown['closed_locations'] and place_to_move == 'S':
+            #    # sektorove uzavreni skol - agenti vyberou nahradni lokaci
+            #    random_place = self.random.choice([loc for loc in ['D', 'P', 'N'] if loc not in self.model.precaution_lockdown['closed_locations']])
+            #    place_to_move = random_place
 
         # zpracovani pohybu agenta podle matice mobility, nebo podle vysledku opatreni a stavu agenta
         if place_to_move != self.current_place:
@@ -367,18 +371,26 @@ class BeerAgent(Agent):
                 destination = (self.coord_work_xgrid, self.coord_work_ygrid)
             elif place_to_move == 'N':
                 # random vyber nakupni lokace
-                destination = self.random.sample(self.model.places['shops'], 1)[0]
+                destination = self.random.sample(self.model.places['shops'], 1)[0][1]
             elif place_to_move == 'R':
-                # random vyber restaurace
-                destination = self.random.sample(self.model.places['pubs'], 1)[0]
-                # agent jde do restaurace podle sveho planu - zvednu modelovy citac uspesne realizace navstevy
-                self.model.a_realized_r_visit +=1
+                # random vyber restaurace, pokud nejsou uzavrene z duvodu karanten
+                open_pubs = [pub for pub in self.model.places['pubs'] if not self.model.is_closed_explicitly(pub[0])]
+                if len(open_pubs) > 0 and len(open_pubs) / len(self.model.places['pubs']) > random.random():
+                    # pokud jsou otevrene nejake lokace R, jde do nich agent v zavislosti na poctu otevrenych lokaci
+                    # (rozhodnuti netisnit se v preplnene restauraci, kdyz je otevrena napr. jen 1 z 5-ti)
+                    destination = self.random.sample(open_pubs, 1)[0][1]
+                     # agent jde do restaurace podle sveho planu - zvednu modelovy citac uspesne realizace navstevy
+                    self.model.a_realized_r_visit += 1
+                else:
+                    place_to_move = 'D'
+                    unscheduled_home = True
+                    destination = (self.coord_house_xgrid, self.coord_house_ygrid)
             elif place_to_move == 'P':
                 # random vyber parku nebo prirodni lokality
-                destination = self.random.sample(self.model.places['nature'], 1)[0]
+                destination = self.random.sample(self.model.places['nature'], 1)[0][1]
             else:
                 # zbyva posledni moznost, kdy place_to_move == 'H' (random pro pripad, ze by v modelu bylo vic H)
-                destination = self.random.sample(self.model.places['hospital'], 1)[0]
+                destination = self.random.sample(self.model.places['hospital'], 1)[0][1]
             # agent se presunuje na cilovou lokaci a preulozi se oznaceni aktualni pozice
             self.model.grid.move_agent(self, (int(destination[0]), int(destination[1])))
             self.current_place = place_to_move

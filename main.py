@@ -23,6 +23,7 @@ def get_cmd_args():
                                                     "jendotlive sekvence strednikem; pokud je uveden --configle, je argument "
                                                     "precautions ignorovan")
     parser.add_argument("-e", "--seed", help="hodnota seedu pro generatory pseudonahodnych cisel")
+    parser.add_argument("-i", '--iterations', help="pocet iteraci pro spusteni scenaru v simulatoru - vysledek je zprumerovan")
     args = parser.parse_args()
     params_library = []
     param_story = {'variable_params': {}, 'fixed_params': {}}
@@ -67,6 +68,11 @@ def get_cmd_args():
 
 if __name__ == '__main__':
 
+    # TODO tip pro porovnani scenaru: zmena frekvence testu - antigen 3,7, PCR 3,7;
+    # TODO tip pro implementaci: long covid - zdravotni nasledky po prodelani onemocneni,
+    #                            prubezna externi infikace
+    #                            pooling 1:10 u PCR testu
+
     params_library = get_cmd_args()
     print(params_library)
     if 'generator' in params_library:
@@ -75,6 +81,10 @@ if __name__ == '__main__':
         else:
             generator.run()
     else:
-        simulator.run(params_library)
+        if 'iterations' in params_library:
+            for i in range(params_library['iterations']):
+                simulator.run(params_library, i)
+        else:
+            simulator.run(params_library)
 
     print('All the hard work done!')

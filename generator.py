@@ -152,14 +152,14 @@ def run(seed=42):
     pocet_skol = np.ceil(df_agents[df_agents['age']<=19].shape[0]/df_podniky['pocet_zaku_na_skole'])
     df_skola = pd.DataFrame({'skola_id': range(int(df_agents['house_id'].max()+1), int(df_agents['house_id'].max()+1+pocet_skol))})
     for r in df_agents[df_agents['age']<20].itertuples():
-        if r.age < 6:
+        if r.age < 5:
             # deti mladsi 5-ti let zustavaji doma s jednim rodicem (work_id = 0)
             df_agents.loc[r.Index, 'work_id'] = r.house_id
             mask_parent = (df_agents['house_id']==r.house_id) & (df_agents['age']>19)
             if df_agents.loc[(df_agents['house_id']==r.house_id) & (df_agents['age']>19)].shape[0]>0:
                 df_agents.loc[df_agents[mask_parent].sample(random_state=seed).index, 'work_id'] = r.house_id
         else:
-            # deti starsi 3 let chodi do skoly/skolky
+            # deti od 5 let chodi do skoly/skolky
             df_agents.loc[r.Index, 'work_id'] = df_skola.sample(random_state=seed)['skola_id'].item()
             df_agents.loc[r.Index, 'work_type'] = 'skola'
     df_agents.loc[df_agents[(df_agents['work_id']==df_agents['house_id'])].index, 'work_type'] = 'doma'
@@ -300,17 +300,23 @@ def run(seed=42):
         df_agents.loc[mask_beercon_by_age & (df_agents['tydenni_spotreba_cepovane']>0), 'tydenni_spotreba_lahvove'] = beer_categ.konzumace_05_zeny * (1-beer_categ.podil_cepovane)
         df_agents.loc[mask_beercon_by_age & (df_agents['tydenni_spotreba_lahvove']>0), 'prechod_na_lahvove_podil'] = beer_categ.prechod_na_lahvove_podil
 
-
-
     # generovani sveta agentu
     print('Generuji svet agentu')
-    households = list(df_agents['house_id'].unique())
-    workplaces = list(df_agents[df_agents['work_type']=='firma']['work_id'].unique())
+    #world_size = len(df_agents['work_id'].unique())
+    households = sorted(list(df_agents['house_id'].unique()))
+    print('\nhouseholds:', households)
+    workplaces = sorted(list(df_agents[df_agents['work_type']=='firma']['work_id'].unique()))
+    print('\nworkplaces:', workplaces)
     schools = list(df_agents[df_agents['work_type']=='skola']['work_id'].unique())
+    print('\nschools:', schools)
+
     occupied_space = households + workplaces + schools
+    world_size = len(occupied_space)
 
     # urcity pomer firem predstavuje obchody - agenti zde pracuji a chodi i nakupovat
     shops = random.sample(workplaces, int(len(workplaces)*df_podniky['pomer_obchodu_k_firmam']))
+    # agenti pracujici v obchodech musi mit worktype = obchod
+    df_agents.loc[(df_agents['work_id'].isin(shops)), 'work_type'] = 'obchod'
     # pocet restauraci je pomerove cislo ze vsech firem
     cnt_pub = int(np.ceil(df_agents.shape[0]/df_podniky['pocet_restauraci_na_obyvatele']))
     # vyber agentu pracujicich v malych firmach - nektere z nich se stanou restauracemi (pro simulaci jsou R firmy do 15 zamcu)
@@ -318,8 +324,11 @@ def run(seed=42):
     pubs = df_agents_in_small_business.groupby('work_id').size().loc[lambda x: x<15].index.to_list()
     # nahodny vyber restauraci s osetrenim (nepravdepodobne) chyby nahodneho vyberu prilis mnoha prvku z maleho rozsahu
     pubs = random.sample(pubs, cnt_pub) if len(pubs) > cnt_pub else pubs
+    # agenti pracujici v restauracich musi mit worktype = restaurace
+    df_agents.loc[(df_agents['work_id'].isin(pubs)), 'work_type'] = 'restaurace'
 
-    world_size = len(occupied_space) #+ cnt_pub
+
+    #world_size = len(occupied_space) #+ cnt_pub
     cnt_nature = int(0.1 * world_size)
     # +1 je nemocnice (H)
     world_size += cnt_nature + 1
@@ -329,34 +338,49 @@ def run(seed=42):
     df_world.sort_index(ascending=False, inplace=True)
     hospital_placed = False
     for line in df_world.itertuples():
-        # ke kazdemu agentu ulozim koordinaty (x,y) domova (D) a prace (W/S)
+        # ke kazdemu agentu ulozim koordinaty (x,y) domova (D) a prace (W/S/R/N)
         for idx, colidx in enumerate(line[1:]):
-            # [1:] protoze prvni v sekvenci je index a ten musim preskocit, idx je pak cislo sloupce
-            if colidx in df_agents['house_id'].tolist():
+            # [1:] protoze prvni v sekvenci je index a ten musim preskocit, idx je pak cislo sloupce a line.Index cislo radku
+            if colidx in households: #df_agents['house_id'].tolist():
+                aa = type(idx)
+                #print('house:', colidx, 'in', idx, ',', line.Index, 'for', df_agents.loc[df_agents['house_id']==colidx].shape[0])
                 df_agents.loc[df_agents['house_id']==colidx, 'coord_house_xgrid'] = idx
                 df_agents.loc[df_agents['house_id']==colidx, 'coord_house_ygrid'] = line.Index
-            if colidx in df_agents['work_id'].tolist():
+                df_agents.loc[df_agents['house_id']==df_agents['work_id'], 'coord_work_xgrid'] = idx
+                df_agents.loc[df_agents['house_id']==df_agents['work_id'], 'coord_work_ygrid'] = line.Index
+                df_world.loc[line.Index, idx] = "{" + f"'D':({colidx}, ({idx}, {line.Index}))" + "}"
+            if colidx in workplaces: #df_agents['work_id'].tolist():
+                aa = type(idx)
                 df_agents.loc[df_agents['work_id']==colidx, 'coord_work_xgrid'] = idx
                 df_agents.loc[df_agents['work_id']==colidx, 'coord_work_ygrid'] = line.Index
-
-            if colidx in households:
-                df_world.loc[line.Index, idx] = "{" + f"'D':({idx}, {line.Index})" + "}"
-            elif colidx in workplaces:
-                df_world.loc[line.Index, idx] = "{" + f"'W':({idx}, {line.Index})" + "}"
+                df_world.loc[line.Index, idx] = "{" + f"'W':({colidx}, ({idx}, {line.Index}))" + "}"
                 if colidx in shops:
                     # workplaces mohou byt soucasne i obchodni domy
-                    df_world.loc[line.Index, idx] = "{" + f"'WN':({idx}, {line.Index})" + "}"
+                    df_world.loc[line.Index, idx] = "{" + f"'WN':({colidx}, ({idx}, {line.Index}))" + "}"
                 elif colidx in pubs:
                     # workplaces mohou byt soucasne i restaurace
-                    df_world.loc[line.Index, idx] = "{" + f"'WR':({idx}, {line.Index})" + "}"
-            elif colidx in schools:
-                df_world.loc[line.Index, idx] = "{" + f"'S':({idx}, {line.Index})" + "}"
-            else:
+                    df_world.loc[line.Index, idx] = "{" + f"'WR':({colidx}, ({idx}, {line.Index}))" + "}"
+            if colidx in schools:
+                df_agents.loc[df_agents['work_id']==colidx, 'coord_work_xgrid'] = idx
+                df_agents.loc[df_agents['work_id']==colidx, 'coord_work_ygrid'] = line.Index
+                df_world.loc[line.Index, idx] = "{" + f"'S':({colidx}, ({idx}, {line.Index}))" + "}"
+            if colidx not in workplaces and colidx not in households and colidx not in schools:
                 if not hospital_placed:
-                    df_world.loc[line.Index, idx] = "{" + f"'H':({idx}, {line.Index})" + "}"
+                    df_world.loc[line.Index, idx] = "{" + f"'H':({colidx}, ({idx}, {line.Index}))" + "}"
                     hospital_placed = True
                 else:
-                    df_world.loc[line.Index, idx] = "{" + f"'P':({idx}, {line.Index})" + "}"
+                    df_world.loc[line.Index, idx] = "{" + f"'P':({colidx}, ({idx}, {line.Index}))" + "}"
+
+            #if colidx in households:
+            #    df_world.loc[line.Index, idx] = "{" + f"'D':({colidx}, ({idx}, {line.Index}))" + "}"
+            #elif colidx in workplaces:
+            #    df_world.loc[line.Index, idx] = "{" + f"'W':({colidx}, ({idx}, {line.Index}))" + "}"
+            #    if colidx in shops:
+            #        # workplaces mohou byt soucasne i obchodni domy
+            #        df_world.loc[line.Index, idx] = "{" + f"'WN':({colidx}, ({idx}, {line.Index}))" + "}"
+            #    elif colidx in pubs:
+            #        # workplaces mohou byt soucasne i restaurace
+            #        df_world.loc[line.Index, idx] = "{" + f"'WR':({colidx}, ({idx}, {line.Index}))" + "}"
 
     # generovani pohybu po domacnostech
     tmp = []
@@ -393,7 +417,6 @@ def run(seed=42):
                     day_of_visit = random.randint(0, 6)
                     # nahodna navsteva mezi 16:00 a pulnoci
                     arr[day_of_visit*24 + random.randint(16, 23)] = 'R'
-                x = 1
 
             arr = dict(zip(df_agent_moves.columns, arr))
             arr['agent_id'] = agent.Index
@@ -406,6 +429,7 @@ def run(seed=42):
             print('...ale urcite mene nez',(start * len(houses))//60 + 1,'minut')
     df_agent_moves.set_index(['agent_id'], inplace=True, drop=True)
     df_agent_moves.sort_index(inplace=True)
+    # print('df_agents po zpracovani pohybu =', df_agents.shape[0])
 
     # deti do 5 let v simualci nechodi do skolky a nektery z dospelych je s nimi doma => kopiruje jejich pohybovou matici
     print('Nastavuji (pra)rodicovske dovolene')
@@ -438,6 +462,7 @@ def run(seed=42):
                 df_agent_moves.iloc[(df_agent_moves.index.isin([nanny]))] = df_agent_moves.loc[[kid]]
                 # a ulozene R lokace zpatky na rodice
                 df_agent_moves.iloc[(df_agent_moves.index.isin([nanny]))] = df_agent_moves.loc[[nanny]].apply(lambda loc: 'R' if df_agent_moves.columns.get_loc(loc.name) in restore else loc)
+    # print('df_agents po zpracovani materskych =', df_agents.shape[0])
 
     print('Ukladam grid pro pouziti v simulaci')
     df_world.to_csv(os.path.join(data_path, 'source\df_grid.csv'), sep=';')
@@ -449,4 +474,3 @@ def run(seed=42):
     df_agents.to_csv(os.path.join(data_path, 'source\df_agents.csv'), sep=';')
 
     print('Socialni generator uspesne dokoncil cinnost -> cas na pivo...nebo na spusteni simulace')
-
