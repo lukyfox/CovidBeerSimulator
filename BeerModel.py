@@ -27,7 +27,7 @@ class BeerModel(Model):
     """
 
     def __init__(self, data_path=None, simtype='covid', random_seed=42, max_steps=17520,
-                 precautions=[], random_patient_0=False):
+                 precautions=[], random_patient_0=None):
         super().__init__()
         #self.reset_randomizer(random_seed)
         self.random.seed(random_seed)
@@ -123,17 +123,13 @@ class BeerModel(Model):
             #self.grid.place_agent(agent, (int(agent.coord_house_xgrid), int(agent.coord_house_ygrid)))
             self.schedule.add(agent)
         if simtype == 'covid':
-            if random_patient_0:
-                # pokud je
-                mask_suitable_spreaders = (self.df_agents['age'] > 19) & \
-                                          (self.df_agents['house_id'] != self.df_agents['work_id']) & \
-                                          (self.df_agents['sicktype']=='asymptomatic')
-                # pokud ma byt agent nahodny v simulaci s infekci vyberu na pocatku jednoho asymptomatickeho agenta pro infikaci - jde vzdy o agenta
-                # pracujiciho (kvuli kontaktum v kolektivu), starsiho 19 let a s asymptomatickym prubehem onemocneni
-                # (napr. takoveho, co se prave vratil ze zajezdu v Dolomitech...)
-                patient_0 = self.agents[self.df_agents.loc[mask_suitable_spreaders].sample().index[0]]
+            if random_patient_0 and random_patient_0 in range(self.df_agents.index.min(), self.df_agents.index.max()+1):
+                # pokud je zadano cislo agenta, je nastaven jako pacient 0
+                patient_0 = self.agents[random_patient_0]
             else:
-                patient_0 = self.agents[226]
+                # pokud je random_patient_0 None nebo je zadano id mimo rozsah, vybere se nahodny pacient 0
+                # z celeho souboru dle parametru vyberu
+                patient_0 = self.select_random_patient()
             # vsechny milniky onemocneni bezi od kroku 1
             patient_0.calc_infect_periods(1)
             patient_0.infected_by = [-1]
@@ -247,6 +243,19 @@ class BeerModel(Model):
         self.a_postponed_r_visit = 0
         self.a_realized_r_visit = 0
         self.duration = time.time()
+
+    def select_random_patient(self):
+        """
+        Pokud ma byt agent nahodny v simulaci s infekci vyberu na pocatku jednoho asymptomatickeho agenta pro infikaci
+        - jde vzdy o agenta pracujiciho v restauraci nebo obchode (kvuli kontaktum v kolektivu), mezi 20 a 40 lety,
+        s asymptomatickym prubehem onemocneni a ze spolecne domacnosti s alespon 2 dalsimi agenty
+        :return: index vybraneho agenta
+        """
+        mask_suitable_spreaders = (self.df_agents['age'].between(20, 40)) & \
+            (self.df_agents['work_id'].isin(self.places['pubs'] + self.places['shops'])) & \
+            (self.df_agents['sicktype']=='asymptomatic') & \
+            (self.df_agents['house_id'].isin(self.df_agents.groupby('house_id').size().loc[lambda x: x>2].index.to_list()))
+        return self.agents[self.df_agents.loc[mask_suitable_spreaders].sample().index[0]]
 
     def agents_to_dataframe(self):
         '''

@@ -6,12 +6,14 @@ import os
 import json
 
 
-def run(seed=42):
+def run(seed=42, soc_size=None):
     """
 
     :param seed:
+    :param soc_size:
     :return:
     """
+    soc_size = 1100 if not soc_size else soc_size
     random.seed(seed)
     data_path = os.path.join(os.getcwd(), 'data') # cesta ke slozce zdroju a vystupu
     with open(os.path.join(data_path, 'source\config_gen.json')) as file:
@@ -20,7 +22,7 @@ def run(seed=42):
     #df_age = pd.read_csv(r'D:\FIM\_StZZ\data\DP\populace.csv', sep=';')
     df_age = pd.DataFrame.from_dict(data['populace'])
     assert sum(df_age['podil_muzu'])+sum(df_age['podil_zen']) == 1.0, 'Pomerne rozlozeni populace v csv neni rovno 1 - zpracovani preruseno'
-    soc_size = 1100 # vysledny pocet agentu se muze lisit v radech jednotek z duvodu zaokrouhleni
+    #soc_size = 1 # vysledny pocet agentu se muze lisit v radech jednotek z duvodu zaokrouhleni
 
     df_age['pocet_muzu'] = (soc_size * df_age['podil_muzu']).round(0).astype(int)
     df_age['pocet_zen'] = (soc_size * df_age['podil_zen']).round(0).astype(int)
@@ -465,12 +467,12 @@ def run(seed=42):
     # print('df_agents po zpracovani materskych =', df_agents.shape[0])
 
     print('Ukladam grid pro pouziti v simulaci')
-    df_world.to_csv(os.path.join(data_path, 'source\df_grid.csv'), sep=';')
+    df_world.to_csv(os.path.join(data_path, f'source\df_grid_{soc_size}.csv'), sep=';')
 
     print('Ukladam pohybovou matici pro pouziti v simulaci')
-    df_agent_moves.to_csv(os.path.join(data_path, 'source\df_agent_moves.csv'), sep=';')
+    df_agent_moves.to_csv(os.path.join(data_path, f'source\df_agent_moves_{soc_size}.csv'), sep=';')
 
     print('Ukladam agenty pro pouziti v simulaci')
-    df_agents.to_csv(os.path.join(data_path, 'source\df_agents.csv'), sep=';')
+    df_agents.to_csv(os.path.join(data_path, f'source\df_agents_{soc_size}.csv'), sep=';')
 
     print('Socialni generator uspesne dokoncil cinnost -> cas na pivo...nebo na spusteni simulace')
