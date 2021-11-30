@@ -6,14 +6,15 @@ import os
 import json
 
 
-def run(seed=42, soc_size=None):
+def run(params):
     """
 
     :param seed:
     :param soc_size:
     :return:
     """
-    soc_size = 1100 if not soc_size else soc_size
+    seed = 42 if "seed" not in params.keys() else params['seed']
+    soc_size = 1100 if "soc_size" not in params.keys() else params['soc_size']
     random.seed(seed)
     data_path = os.path.join(os.getcwd(), 'data') # cesta ke slozce zdroju a vystupu
     with open(os.path.join(data_path, 'source\config_gen.json')) as file:

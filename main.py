@@ -31,10 +31,12 @@ def get_cmd_args():
     param_story = {'variable_params': {}, 'fixed_params': {}}
 
     if args.generator:
+        dct = {'generator': True}
         if args.pop:
-            return ['generator', int(args.pop), int(args.seed)] if args.seed else ['generator', int(args.pop), 42]
-        else:
-            return ['generator', None, int(args.seed)] if args.seed else ['generator']
+            dct['soc_size'] = int(args.pop)
+        if args.seed:
+            dct['seed'] = int(args.seed)
+        return dct
     else:
         if args.steps:
             param_story['fixed_params']['max_steps'] = int(args.steps)
@@ -84,10 +86,7 @@ if __name__ == '__main__':
     params_library = get_cmd_args()
     print(params_library)
     if 'generator' in params_library:
-        if len(params_library) > 1:
-            generator.run(seed=params_library[1], soc_size=params_library[2])
-        else:
-            generator.run()
+        generator.run(params_library)
     else:
         if 'iterations' in params_library:
             for i in range(params_library['iterations']):
