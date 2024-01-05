@@ -46,8 +46,8 @@ def get_cmd_args():
             param_story['fixed_params']['random_seed'] = int(args.seed)
         if args.patient:
             param_story['fixed_params']['random_patient_0'] = int(args.patient)
-        if args.configle:
-            # TODO zapracovat na impelementaci konfiguracniho souboru
+        if 1 == 0 and args.configle:
+            # TODO zapracovat na impelementaci konfiguracniho souboru, do te doby never True
             print(f"config file {args.configle}")
             df_ini = pd.read_csv(args.configle, sep=';')
             mask_base = (df_ini.columns[0]=='no_covid') | ((df_ini.columns[0]=='covid') & (df_ini.columns[1].isna))
